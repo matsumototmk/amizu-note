@@ -27,13 +27,19 @@
         <input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" hidden>
       </label>
       <p class="hint">写真・画像・PDF を選べます</p>
+      <button id="newChartBtn" class="draw-btn">✎ 編み図を描く</button>
       <div id="installTip" class="install-tip" hidden>
         <b>アプリとして使うには</b><br>
         Safari の共有ボタン（□に↑）→「ホーム画面に追加」を押してください。ホーム画面から開くと、全画面で使え、データも消えにくくなります。
         <button id="installTipClose" class="text-btn" aria-label="閉じる">×</button>
       </div>
+      <h2 class="section-title">編む</h2>
       <ul id="patternList" class="pattern-list"></ul>
       <p id="emptyMsg" class="empty">まだ編み図がありません。<br>上のボタンから取り込んでみましょう。</p>
+      <div id="chartSection" hidden>
+        <h2 class="section-title">描いた編み図</h2>
+        <ul id="chartList" class="pattern-list"></ul>
+      </div>
     </main>
   </section>
 
@@ -101,6 +107,7 @@
       </div>
       <label class="check"><input id="dimChk" type="checkbox"> ほかの段を暗くする</label>
       <label class="check"><input id="snapChk" type="checkbox"> 段を進めるとき罫線に自動で合わせる</label>
+      <button id="editChartBtn" class="sub" hidden>✎ この編み図を描き直す</button>
       </div>
     </div>
 
@@ -129,6 +136,10 @@
           <span id="pageLabel"></span>
           <button id="nextPage" aria-label="次のページ">›</button>
         </div>
+        <div class="group">
+          <button id="counterChip" class="counter-chip" aria-label="カウンターを1増やす"><span id="chipName">目数</span> <b id="chipNum">0</b> ＋</button>
+          <button id="notesBtn">メモ</button>
+        </div>
       </div>
       <div class="rowctl">
         <button id="prevRow" class="row-btn back">◀ 戻る</button>
@@ -136,11 +147,56 @@
         <button id="nextRow" class="row-btn next">次の段 ▶</button>
       </div>
     </footer>
+
+    <!-- カウンター・メモ -->
+    <div id="notesSheet" class="sheet" hidden>
+      <div class="sheet-head">
+        <b>カウンター・メモ</b>
+        <button id="notesClose" class="primary">閉じる</button>
+      </div>
+      <div class="sheet-body">
+        <div id="counterList"></div>
+        <button id="addCounter" class="sub">＋ カウンターを追加</button>
+        <h3>メモ</h3>
+        <label class="field"><span>針・かぎ針</span><input id="noteNeedle" placeholder="例：6号 / 5/0号"></label>
+        <label class="field"><span>糸</span><input id="noteYarn" placeholder="例：並太ウール 生成り 3玉"></label>
+        <label class="field"><span>ゲージ</span><input id="noteGauge" placeholder="例：10cm角 20目×28段"></label>
+        <label class="field"><span>メモ</span><textarea id="noteText" rows="4" placeholder="気づいたこと、変更したところなど"></textarea></label>
+      </div>
+    </div>
   </section>
+
+  <!-- ===== 編み図を描く画面 ===== -->
+  <section id="editor" hidden>
+    <header class="bar">
+      <button id="edBack" class="text-btn">‹ 一覧</button>
+      <button id="edTitle" class="title" title="タップで名前を変更"></button>
+      <button id="edUndo" class="icon-btn" aria-label="元に戻す">↶</button>
+      <button id="edRedo" class="icon-btn" aria-label="やり直す">↷</button>
+      <button id="edMenu" class="icon-btn" aria-label="設定">⋯</button>
+      <button id="edKnit" class="primary">編む ▶</button>
+    </header>
+    <div id="edWrap"><canvas id="edCanvas"></canvas></div>
+    <footer class="ed-tools">
+      <div id="edOptions" class="ed-options"></div>
+      <div class="ed-toolbar">
+        <button data-tool="hand"><span>✋</span><small>移動</small></button>
+        <button data-tool="pen"><span>✎</span><small>ペン</small></button>
+        <button data-tool="stamp"><span>✕</span><small>記号</small></button>
+        <button data-tool="fill"><span>■</span><small>色</small></button>
+        <button data-tool="move"><span>✥</span><small>動かす</small></button>
+        <button data-tool="eraser"><span>⌫</span><small>消す</small></button>
+      </div>
+    </footer>
+  </section>
+
+  <div id="modal" class="modal" hidden><div id="modalBox" class="modal-box"></div></div>
 
   <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><p id="busyText">読み込み中…</p></div></div>
   <div id="toast" class="toast" hidden></div>
 
+  <script src="symbols.js"></script>
+  <script src="editor.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

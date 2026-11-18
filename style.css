@@ -172,6 +172,98 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .rowcount span { display: block; font-size: 30px; font-weight: 700; line-height: 1; color: var(--accent); }
 .rowcount small { font-size: 12px; color: var(--muted); }
 
+/* ---------- 一覧：描くボタン・見出し ---------- */
+.draw-btn {
+  display: block; width: 100%; padding: 14px; border-radius: 14px;
+  border: 2px solid var(--accent); background: var(--surface); color: var(--accent);
+  font-size: 17px; font-weight: 600; margin-bottom: 8px;
+}
+.section-title { font-size: 15px; color: var(--muted); margin: 24px 0 10px; font-weight: 600; }
+
+/* ---------- ステップ2：カウンター・メモ ---------- */
+.counter-chip {
+  height: 36px; border-radius: 18px; border: 1px solid var(--accent);
+  background: var(--accent-soft); color: var(--accent); padding: 0 12px; font-size: 14px; white-space: nowrap;
+}
+.counter-chip b { font-size: 17px; margin: 0 2px; }
+#notesBtn { padding: 0 12px; }
+.tools { flex-wrap: wrap; }
+
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  max-height: 78vh; display: flex; flex-direction: column;
+  background: var(--surface); border-radius: 18px 18px 0 0;
+  box-shadow: 0 -6px 24px rgba(0,0,0,.18);
+  padding-bottom: var(--safe-b);
+  max-width: 720px; margin: 0 auto;
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.sheet-body { overflow: auto; padding: 12px 16px 20px; display: grid; gap: 12px; }
+.sheet-body h3 { margin: 10px 0 0; font-size: 15px; color: var(--muted); }
+.counter { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; display: grid; gap: 8px; }
+.counter-top { display: flex; align-items: center; gap: 8px; }
+.c-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; border: none; border-bottom: 1px dashed var(--line); padding: 4px 0; background: none; color: var(--text); }
+.c-del { font-size: 14px; color: var(--muted); }
+.counter-main { display: flex; align-items: center; gap: 10px; }
+.counter-main .c-minus, .counter-main .c-plus { width: 56px; height: 52px; border-radius: 12px; font-size: 24px; border: 1px solid var(--line); background: var(--bg); }
+.counter-main .c-plus { background: var(--accent); color: #fff; border: none; }
+.c-num { min-width: 56px; text-align: center; font-size: 30px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.c-zero { flex: 0 0 auto !important; padding: 0 12px; margin-left: auto; }
+.check.small { font-size: 14px; color: var(--muted); }
+.field { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+.field input, .field textarea {
+  font: inherit; font-size: 16px; color: var(--text); padding: 9px 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); width: 100%;
+}
+.field textarea { resize: vertical; }
+
+/* ---------- ステップ3：描く画面 ---------- */
+#editor { height: 100%; display: flex; flex-direction: column; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#edWrap { flex: 1; position: relative; overflow: hidden; background: #e9e4e0; }
+#edCanvas { position: absolute; inset: 0; touch-action: none; display: block; }
+.icon-btn { background: none; border: none; font-size: 22px; width: 38px; height: 38px; border-radius: 8px; color: var(--text); }
+.icon-btn:disabled { opacity: .3; }
+#edKnit { padding: 8px 14px; white-space: nowrap; }
+.ed-tools { background: var(--surface); border-top: 1px solid var(--line); padding: 8px 12px calc(8px + var(--safe-b)); }
+.ed-options { min-height: 44px; display: grid; gap: 8px; margin-bottom: 8px; }
+.ed-toolbar { display: flex; gap: 6px; justify-content: center; }
+.ed-toolbar button {
+  flex: 1; max-width: 96px; height: 56px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.ed-toolbar button span { font-size: 20px; line-height: 1; }
+.ed-toolbar button small { font-size: 11px; color: var(--muted); }
+.ed-toolbar button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ed-toolbar button.on small { color: #fff; }
+.opt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opt-gap { flex: 1; }
+.opt-note { font-size: 13px; color: var(--muted); }
+.swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); }
+.swatch.on { outline: 3px solid var(--accent); outline-offset: 2px; }
+.chip-btn { min-width: 44px; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; }
+.chip-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.danger { color: #c53030 !important; border-color: #f0b4b4 !important; }
+.small-seg button { padding: 6px 14px; font-size: 14px; }
+.sym-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.sym-btn {
+  flex: 0 0 auto; width: 76px; border-radius: 10px; border: 1px solid var(--line); background: #fff;
+  display: flex; flex-direction: column; align-items: center; padding: 4px 2px; gap: 2px;
+}
+.sym-btn img { width: 52px; height: 38px; }
+.sym-btn span { font-size: 10px; line-height: 1.2; color: var(--text); text-align: center; }
+.sym-btn.on { border: 2px solid var(--accent); background: var(--accent-soft); }
+
+/* ---------- ダイアログ ---------- */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 55; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-box { background: var(--surface); border-radius: 16px; padding: 18px; width: 100%; max-width: 420px; display: grid; gap: 14px; max-height: 90vh; overflow: auto; }
+.modal-box h2 { margin: 0; font-size: 18px; }
+.type-list { display: grid; gap: 8px; color: var(--text); font-size: 16px; }
+.type-list label { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.type-list input { width: 18px; height: 18px; accent-color: var(--accent); }
+.size-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions .sub { flex: 0 1 auto; padding: 0 14px; }
+
 /* ---------- 読み込み中・お知らせ ---------- */
 .busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .busy-box { background: var(--surface); padding: 24px 28px; border-radius: 16px; text-align: center; }

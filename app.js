@@ -23,10 +23,12 @@ let dbPromise;
 function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open('amizu-note', 1);
+      const req = indexedDB.open('amizu-note', 2);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore('meta', { keyPath: 'id' });
-        req.result.createObjectStore('pages', { keyPath: 'id' });
+        const db = req.result;
+        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('pages')) db.createObjectStore('pages', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('charts')) db.createObjectStore('charts', { keyPath: 'id' }); // 描いた編み図
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -55,6 +57,12 @@ const deletePattern = (id) => dbRun(['meta', 'pages'], 'readwrite', (t) => {
   t.objectStore('meta').delete(id);
   t.objectStore('pages').delete(id);
 });
+const getAllCharts = () => dbRun('charts', 'readonly', (t) => t.objectStore('charts').getAll());
+const getChart = (id) => dbRun('charts', 'readonly', (t) => t.objectStore('charts').get(id));
+const putChart = (d) => dbRun('charts', 'readwrite', (t) => { t.objectStore('charts').put(d); });
+const deleteChart = (id) => dbRun('charts', 'readwrite', (t) => { t.objectStore('charts').delete(id); });
+
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 /* ---------- ちょっとした表示 ---------- */
 let toastTimer;
@@ -148,7 +156,7 @@ async function importFile(file) {
     const blobs = isPdf ? await pdfToImages(file) : [await shrinkPhoto(file)];
     if (!blobs.length) throw new Error('ページが見つかりませんでした。');
     const meta = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      id: newId(),
       name: file.name.replace(/\.[^.]+$/, '') || '編み図',
       created: Date.now(),
       pageCount: blobs.length,
@@ -214,6 +222,35 @@ async function renderHome() {
       }
     });
   }
+
+  // 描いた編み図
+  const charts = (await getAllCharts()).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+  const clist = $('chartList');
+  clist.innerHTML = '';
+  $('chartSection').hidden = charts.length === 0;
+  const kindName = { knit: '棒針', 'crochet-grid': 'かぎ針・方眼', 'crochet-free': 'かぎ針・円' };
+  for (const d of charts) {
+    const li = document.createElement('li');
+    li.className = 'card';
+    const open = document.createElement('button');
+    open.className = 'card-open';
+    const img = document.createElement('img');
+    img.alt = '';
+    if (d.thumb) img.src = d.thumb;
+    const info = document.createElement('div');
+    info.className = 'card-info';
+    const name = document.createElement('div');
+    name.className = 'card-name';
+    name.textContent = d.name;
+    const metaLine = document.createElement('div');
+    metaLine.className = 'card-meta';
+    metaLine.textContent = (kindName[d.kind] || '') + (d.mode === 'grid' ? ` ・ ${d.cols}目×${d.rows}段` : '');
+    info.append(name, metaLine);
+    open.append(img, info);
+    open.onclick = () => Editor.open(d.id);
+    li.append(open);
+    clist.append(li);
+  }
 }
 
 /* ---------- 見る画面 ---------- */
@@ -243,6 +280,11 @@ async function openViewer(id, isNew = false) {
   const p = await getPages(id);
   if (!cur || !p) { toast('編み図が見つかりません'); return; }
   curBlobs = p.blobs;
+  if (!cur.counters) cur.counters = [{ name: '目数', n: 0, reset: true }];
+  if (!cur.notes) cur.notes = {};
+  $('editChartBtn').hidden = !cur.chartId;
+  $('notesSheet').hidden = true;
+  renderCounters();
 
   $('home').hidden = true;
   $('viewer').hidden = false;
@@ -470,7 +512,7 @@ function setupPinch() {
   sc.addEventListener('wheel', (e) => {
     if (!e.ctrlKey || !cur) return;
     e.preventDefault();
-    zoomAt(st().zoom * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    zoomAt(st().zoom * Math.exp(-e.deltaY * 0.003), e.clientX, e.clientY);
     scheduleSave();
   }, { passive: false });
 }
@@ -519,6 +561,10 @@ function stepRow(n) {
   }
   s.y = clamp(ny, 0, 1 - s.h);
   s.row += n;
+  if (n > 0) {
+    cur.counters.forEach((c) => { if (c.reset) c.n = 0; });
+    renderCounters();
+  }
   if (s.snap !== false) snapBand(0.25, true);
   render();
   scrollToBand();
@@ -610,8 +656,95 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') saveNow();
 });
 
+/* ---------- ステップ2：カウンターとメモ ---------- */
+function renderCounters() {
+  if (!cur) return;
+  const cs = cur.counters;
+  // 下の操作エリアの小さなカウンター（1つ目）
+  $('counterChip').hidden = cs.length === 0;
+  if (cs.length) {
+    $('chipName').textContent = cs[0].name;
+    $('chipNum').textContent = cs[0].n;
+  }
+  // メモ画面のカウンター一覧
+  const list = $('counterList');
+  list.innerHTML = '';
+  cs.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'counter';
+    row.innerHTML = `
+      <div class="counter-top">
+        <input class="c-name" aria-label="カウンターの名前">
+        <button class="c-del text-btn" aria-label="このカウンターを削除">削除</button>
+      </div>
+      <div class="counter-main">
+        <button class="c-minus" aria-label="1減らす">－</button>
+        <span class="c-num"></span>
+        <button class="c-plus" aria-label="1増やす">＋</button>
+        <button class="c-zero sub">0に戻す</button>
+      </div>
+      <label class="check small"><input type="checkbox" class="c-reset"> 段を進めたら0に戻す</label>`;
+    row.querySelector('.c-name').value = c.name;
+    row.querySelector('.c-num').textContent = c.n;
+    row.querySelector('.c-reset').checked = !!c.reset;
+    row.querySelector('.c-name').onchange = (e) => { c.name = e.target.value.trim() || 'カウンター'; renderCounters(); scheduleSave(); };
+    row.querySelector('.c-minus').onclick = () => { if (c.n > 0) c.n--; renderCounters(); scheduleSave(); };
+    row.querySelector('.c-plus').onclick = () => { c.n++; renderCounters(); scheduleSave(); if (navigator.vibrate) navigator.vibrate(10); };
+    row.querySelector('.c-zero').onclick = () => { c.n = 0; renderCounters(); scheduleSave(); };
+    row.querySelector('.c-reset').onchange = (e) => { c.reset = e.target.checked; scheduleSave(); };
+    row.querySelector('.c-del').onclick = () => {
+      if (!confirm(`カウンター「${c.name}」を削除しますか？`)) return;
+      cs.splice(i, 1); renderCounters(); scheduleSave();
+    };
+    list.append(row);
+  });
+}
+
+function openNotes() {
+  const n = cur.notes;
+  $('noteNeedle').value = n.needle || '';
+  $('noteYarn').value = n.yarn || '';
+  $('noteGauge').value = n.gauge || '';
+  $('noteText').value = n.text || '';
+  renderCounters();
+  $('notesSheet').hidden = false;
+}
+
+function setupNotes() {
+  $('notesBtn').onclick = openNotes;
+  $('notesClose').onclick = () => { $('notesSheet').hidden = true; saveNow(); };
+  $('counterChip').onclick = () => {
+    const c = cur.counters[0];
+    if (!c) return;
+    c.n++;
+    renderCounters();
+    scheduleSave();
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+  $('addCounter').onclick = () => {
+    cur.counters.push({ name: cur.counters.length ? '模様の回数' : '目数', n: 0, reset: false });
+    renderCounters();
+    scheduleSave();
+  };
+  const bind = (id, key) => $(id).addEventListener('input', (e) => { cur.notes[key] = e.target.value; scheduleSave(); });
+  bind('noteNeedle', 'needle');
+  bind('noteYarn', 'yarn');
+  bind('noteGauge', 'gauge');
+  bind('noteText', 'text');
+
+  $('editChartBtn').onclick = async () => {
+    const chartId = cur.chartId;
+    await closeViewer();
+    Editor.open(chartId);
+  };
+}
+
 /* ---------- ボタンなどのつなぎこみ ---------- */
 function setup() {
+  Editor.init();
+  setupNotes();
+  $('newChartBtn').onclick = () => Editor.newChartDialog();
+
   $('fileInput').addEventListener('change', (e) => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -716,7 +849,7 @@ function setup() {
 
   // パソコンで試すとき用のキー操作
   document.addEventListener('keydown', (e) => {
-    if (!cur || e.target.tagName === 'INPUT') return;
+    if (!cur || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || !$('notesSheet').hidden) return;
     if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); stepRow(1); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); stepRow(-1); }
   });
