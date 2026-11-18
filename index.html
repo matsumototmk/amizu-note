@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#b5576b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="あみ図ノート">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <title>あみ図ノート</title>
+</head>
+<body>
+
+  <!-- ===== 一覧画面 ===== -->
+  <section id="home">
+    <header class="bar">
+      <h1>あみ図ノート</h1>
+    </header>
+    <main class="home-main">
+      <label class="import-btn">
+        ＋ 編み図を取り込む
+        <input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" hidden>
+      </label>
+      <p class="hint">写真・画像・PDF を選べます</p>
+      <div id="installTip" class="install-tip" hidden>
+        <b>アプリとして使うには</b><br>
+        Safari の共有ボタン（□に↑）→「ホーム画面に追加」を押してください。ホーム画面から開くと、全画面で使え、データも消えにくくなります。
+        <button id="installTipClose" class="text-btn" aria-label="閉じる">×</button>
+      </div>
+      <ul id="patternList" class="pattern-list"></ul>
+      <p id="emptyMsg" class="empty">まだ編み図がありません。<br>上のボタンから取り込んでみましょう。</p>
+    </main>
+  </section>
+
+  <!-- ===== 編み図を見る画面 ===== -->
+  <section id="viewer" hidden>
+    <header class="bar">
+      <button id="backBtn" class="text-btn">‹ 一覧</button>
+      <button id="titleBtn" class="title" title="タップで名前を変更"></button>
+      <button id="adjustBtn" class="text-btn">調整</button>
+    </header>
+
+    <div id="adjustPanel" class="panel" hidden>
+      <div class="tabs">
+        <div class="seg tab-seg">
+          <button data-tab="band" class="on">帯</button>
+          <button data-tab="rot">傾き</button>
+          <button data-tab="opt">設定</button>
+        </div>
+        <button id="doneBtn" class="primary">完了</button>
+      </div>
+
+      <!-- 帯タブ -->
+      <div class="pane" data-pane="band">
+        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。2本指で拡大すると合わせやすくなります。</p>
+        <div class="nudge-row">
+          <div class="nudge"><span>位置</span><button data-nudge="up" aria-label="帯を上へ">▲</button><button data-nudge="down" aria-label="帯を下へ">▼</button></div>
+          <div class="nudge"><span>太さ</span><button data-nudge="thin" aria-label="帯を細く">－</button><button data-nudge="thick" aria-label="帯を太く">＋</button></div>
+        </div>
+        <div class="panel-row">
+          <button id="snapBtn" class="sub">罫線にぴったり</button>
+          <button id="multiBtn" class="sub">何段分かで合わせる</button>
+        </div>
+      </div>
+
+      <!-- 傾きタブ -->
+      <div class="pane" data-pane="rot" hidden>
+        <p class="panel-help">写真が傾いていたら、編み図の横線が青いガイド線とそろうように回します。</p>
+      <div class="panel-row rot-row">
+        <span>傾き</span>
+        <div class="rot-ctl">
+          <button id="rotMinus" class="mini" aria-label="左に少し回す">↺</button>
+          <input id="rotSlider" type="range" min="-20" max="20" step="0.1">
+          <button id="rotPlus" class="mini" aria-label="右に少し回す">↻</button>
+          <span id="rotLabel" class="rot-label">0.0°</span>
+        </div>
+      </div>
+      <div class="panel-row">
+        <button id="rot90" class="sub">⟳ 90°回転</button>
+        <button id="rotReset" class="sub">傾きを0に戻す</button>
+      </div>
+      </div>
+
+      <!-- 設定タブ -->
+      <div class="pane" data-pane="opt" hidden>
+      <div class="panel-row">
+        <span>進む向き</span>
+        <div class="seg">
+          <button data-dir="up">↑ 上へ</button>
+          <button data-dir="down">↓ 下へ</button>
+        </div>
+      </div>
+      <div class="panel-row">
+        <span>今の段数</span>
+        <input id="rowInput" type="number" min="1" inputmode="numeric">
+      </div>
+      <label class="check"><input id="dimChk" type="checkbox"> ほかの段を暗くする</label>
+      <label class="check"><input id="snapChk" type="checkbox"> 段を進めるとき罫線に自動で合わせる</label>
+      </div>
+    </div>
+
+    <div id="scroller">
+      <div id="stage">
+        <canvas id="pageCanvas" aria-label="編み図"></canvas>
+        <div id="guides"></div>
+        <div id="shadeTop" class="shade"></div>
+        <div id="shadeBottom" class="shade"></div>
+        <div id="band">
+          <div class="handle top"></div>
+          <div class="handle bottom"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="controls">
+      <div class="tools">
+        <div class="group">
+          <button id="zoomOut" aria-label="縮小">－</button>
+          <button id="zoomFit">幅</button>
+          <button id="zoomIn" aria-label="拡大">＋</button>
+        </div>
+        <div id="pageNav" class="group">
+          <button id="prevPage" aria-label="前のページ">‹</button>
+          <span id="pageLabel"></span>
+          <button id="nextPage" aria-label="次のページ">›</button>
+        </div>
+      </div>
+      <div class="rowctl">
+        <button id="prevRow" class="row-btn back">◀ 戻る</button>
+        <div class="rowcount"><span id="rowNum">1</span><small>段目</small></div>
+        <button id="nextRow" class="row-btn next">次の段 ▶</button>
+      </div>
+    </footer>
+  </section>
+
+  <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><p id="busyText">読み込み中…</p></div></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
