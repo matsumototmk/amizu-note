@@ -1027,15 +1027,15 @@ function setupPinch() {
 /* --- 帯の形 ---
    s.y  : 頂点（折れ目）での帯の上のふち   s.h : 帯の太さ（たての長さ）
    s.ax : 頂点の横の位置（0〜1、ふつうは真ん中 0.5）
-   s.bend : 左右のはしが頂点よりどれだけ下がるか（マイナスなら上がる）。0 ならまっすぐ
+   s.bend : 腕の傾き。折れ目から横に「ページ幅の半分」進んだとき、どれだけ下がるか
+            （マイナスなら上がる）。0 ならまっすぐ。左右の腕はいつも同じ傾き。
    くの字（Vの字）の段の編み図にも、帯を折り曲げて合わせられる。 */
 const apexX = (s) => (s.ax === undefined ? 0.5 : s.ax);
 // 横の位置 x での、帯の上のふちの高さ
 function bandTopAt(s, x) {
   const b = s.bend || 0;
   if (!b) return s.y;
-  const ax = apexX(s);
-  return s.y + b * (x < ax ? (ax - x) / ax : (x - ax) / (1 - ax));
+  return s.y + b * Math.abs(x - apexX(s)) * 2;
 }
 const isBent = (s) => Math.abs(s.bend || 0) > 0.0005;
 
@@ -1089,12 +1089,17 @@ function renderBand() {
     g.innerHTML = html;
   }
 
-  // 調整用の持ち手：上下のふちは頂点に、「曲げ」は右はしの近くに置く
+  // 調整用の持ち手：上下のふちは頂点に、「曲げ」は折れ目のすぐ右に置く
   const place = (id, xFrac, yFrac) => { $(id).style.left = (xFrac * 100) + '%'; $(id).style.top = (yFrac * 100) + '%'; };
   place('hTop', apexX(s), s.y);
   place('hBot', apexX(s), s.y + s.h);
-  const bx = Math.max(apexX(s) + 0.05, 0.9);
+  const bx = bendHandleX(s, W);
   place('hBend', bx, bandTopAt(s, bx) + s.h / 2);
+}
+
+// 「曲げ」の持ち手の横の位置：折れ目から画面で80ピクセルほど右（拡大していても近くに出る）
+function bendHandleX(s, W) {
+  return Math.min(apexX(s) + 80 / W, 0.98);
 }
 
 function render() {
@@ -1197,9 +1202,7 @@ function setupBandDrag() {
     const W = rect.width, H = rect.height;
     const sx = e.clientX, sy = e.clientY;
     const s = st();
-    const y0 = s.y, h0 = s.h, b0 = s.bend || 0, a0 = apexX(s);
-    const bx = Math.max(a0 + 0.05, 0.9);           // 「曲げ」の持ち手の横の位置
-    const k = (bx - a0) / (1 - a0);                // そこでの曲がりの効き方
+    const y0 = s.y, h0 = s.h, a0 = apexX(s);
     el.setPointerCapture(e.pointerId);
 
     const onMove = (ev) => {
@@ -1215,7 +1218,10 @@ function setupBandDrag() {
       } else if (mode === 'bottom') {
         s.h = clamp(h0 + d, MIN_BAND, 1 - y0);
       } else if (mode === 'bend') {
-        s.bend = clamp(b0 + d / k, -1, 1);
+        // 指のある所を、帯（の真ん中）が通るように曲げる
+        const fx = (ev.clientX - rect.left) / W, fy = (ev.clientY - rect.top) / H;
+        const dx = Math.max(Math.abs(fx - a0), 20 / W);
+        s.bend = clamp((fy - h0 / 2 - y0) / (dx * 2), -3, 3);
       }
       renderBand();
     };
@@ -1431,12 +1437,22 @@ function setup() {
     thin:  (s, px) => { if (s.h - px >= MIN_BAND) { s.h -= px; s.y += px / 2; } },
     thick: (s, px) => { s.h = Math.min(1, s.h + px); s.y = clamp(s.y - px / 2, 0, 1 - s.h); },
     // くの字：両はしを上げ下げ（2ピクセルずつ）、折れ目を左右へ
-    bendUp:   (s, px) => { s.bend = clamp((s.bend || 0) - px * 2, -1, 1); },
-    bendDown: (s, px) => { s.bend = clamp((s.bend || 0) + px * 2, -1, 1); },
+    bendUp:   (s, px) => { s.bend = clamp((s.bend || 0) - px * 2, -3, 3); },
+    bendDown: (s, px) => { s.bend = clamp((s.bend || 0) + px * 2, -3, 3); },
     apexL:    (s) => { s.ax = clamp(apexX(s) - 1 / $('stage').offsetWidth, 0.05, 0.85); },
     apexR:    (s) => { s.ax = clamp(apexX(s) + 1 / $('stage').offsetWidth, 0.05, 0.85); },
   };
   $('straightBtn').onclick = () => { const s = st(); s.bend = 0; s.ax = 0.5; render(); scheduleSave(); };
+  // 腕を45°に：両はしが上がる「Vの字」（もう一度押すと下がる「Λの字」）
+  $('bend45Btn').onclick = () => {
+    const s = st();
+    const stage = $('stage');
+    // 45°：横に進んだのと同じだけ上がる（ページ幅の半分進むと、その長さだけ上がる）
+    const up = -(stage.offsetWidth / stage.offsetHeight) / 2;
+    s.bend = Math.abs((s.bend || 0) - up) < 0.001 ? -up : up; // もう一度押すと逆向き（Λの字）
+    render();
+    scheduleSave();
+  };
   document.querySelectorAll('[data-nudge]').forEach((btn) => {
     const fn = nudges[btn.dataset.nudge];
     const once = () => {

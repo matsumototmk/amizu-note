@@ -73,7 +73,7 @@
 
       <!-- 帯タブ -->
       <div class="pane" data-pane="band">
-        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。くの字の段は、青い「曲げ」の丸をドラッグするか「曲げ」ボタンで帯を折り曲げ、「頂点」で折れ目の位置を合わせます。</p>
+        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。くの字の段は、「頂点」で折れ目を編み図の中心に合わせてから、「45°にする」か、折れ目の横の青い丸をドラッグして帯を曲げます（青い丸は指のある所を帯が通るように動きます）。</p>
         <div class="nudge-row">
           <div class="nudge"><span>位置</span><button data-nudge="up" aria-label="帯を上へ">▲</button><button data-nudge="down" aria-label="帯を下へ">▼</button></div>
           <div class="nudge"><span>太さ</span><button data-nudge="thin" aria-label="帯を細く">－</button><button data-nudge="thick" aria-label="帯を太く">＋</button></div>
@@ -83,6 +83,7 @@
           <div class="nudge"><span>頂点</span><button data-nudge="apexL" aria-label="頂点を左へ">◀</button><button data-nudge="apexR" aria-label="頂点を右へ">▶</button></div>
         </div>
         <div class="panel-row">
+          <button id="bend45Btn" class="sub">∨ 45°にする</button>
           <button id="straightBtn" class="sub">まっすぐに戻す</button>
         </div>
         <div class="panel-row">
