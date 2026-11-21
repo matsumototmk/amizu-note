@@ -429,6 +429,7 @@ async function renderHome() {
     : '写真・画像・PDF を選べます（何枚かまとめて選ぶと、1つのグループになります）';
   $('newChartBtn').hidden = inGroup;
   $('newGroupBtn').hidden = inGroup;
+  $('backupBox').hidden = inGroup;
   $('listTitle').textContent = inGroup ? '編み図（取り込んだ順）' : '編む';
 
   let metas;
@@ -1606,6 +1607,7 @@ function setup() {
   setupNotes();
   setupInk();
   setupCrop();
+  Backup.init();
   $('newChartBtn').onclick = () => Editor.newChartDialog();
 
   $('fileInput').addEventListener('change', (e) => {

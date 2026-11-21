@@ -208,6 +208,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .section-title { font-size: 15px; color: var(--muted); margin: 24px 0 10px; font-weight: 600; }
 
+/* ---------- バックアップ ---------- */
+.backup-box { margin-top: 36px; padding-top: 4px; border-top: 1px solid var(--line); }
+.backup-help { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0 0 6px; }
+.backup-info { font-size: 14px; margin: 0 0 10px; }
+.backup-info.warn { color: #c53030; font-weight: 600; }
+.backup-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+.backup-btns .sub { height: 44px; min-width: 160px; }
+.file-btn { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+
 /* ---------- グループ ---------- */
 .section-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .small-link { font-size: 15px; }

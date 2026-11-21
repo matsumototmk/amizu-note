@@ -50,6 +50,15 @@
         <h2 class="section-title">描いた編み図</h2>
         <ul id="chartList" class="pattern-list"></ul>
       </div>
+      <div id="backupBox" class="backup-box">
+        <h2 class="section-title">バックアップ</h2>
+        <p class="backup-help">編み図・段数・書き込み・メモを全部まとめて、1つのファイルに保存します。iPhoneとiPadの間で移すときにも使えます。</p>
+        <p id="backupInfo" class="backup-info"></p>
+        <div class="backup-btns">
+          <button id="backupSave" class="sub">⬇ バックアップを保存</button>
+          <label class="sub file-btn">⬆ バックアップから戻す<input id="backupFile" type="file" hidden></label>
+        </div>
+      </div>
     </main>
   </section>
 
@@ -313,6 +322,7 @@
   <script src="symbols.js"></script>
   <script src="editor.js"></script>
   <script src="notepad.js"></script>
+  <script src="backup.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

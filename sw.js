@@ -1,6 +1,6 @@
 // オフラインでも開けるようにするための仕組み（Service Worker）
 // ネットにつながっているときは最新を取りに行き、つながらないときは保存しておいたものを使う
-const CACHE = 'amizu-note-v10';
+const CACHE = 'amizu-note-v11';
 const APP_FILES = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const APP_FILES = [
   './symbols.js',
   './editor.js',
   './notepad.js',
+  './backup.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',
