@@ -86,7 +86,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #inkCanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 .inking #inkCanvas { pointer-events: auto; touch-action: none; cursor: crosshair; }
 .inking.pen-only #inkCanvas { touch-action: pan-x pan-y; } /* ペンだけで描くときは、指でスクロールできる */
-.inking #band, .inking .shade { opacity: .35; }
+.inking #bandSvg { opacity: .35; }
 #inkPanel .swatch { width: 30px; height: 30px; }
 #inkBtn { padding: 0 10px; }
 #inkBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -98,44 +98,31 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: repeating-linear-gradient(to bottom, transparent 0 47px, rgba(0, 120, 255, .65) 47px 48px);
 }
 .show-guides #guides { opacity: 1; }
-#band { z-index: 2; }
-
-#band {
-  position: absolute; left: 0; right: 0;
-  background: var(--band);
-  mix-blend-mode: multiply; /* 記号の黒い線はそのまま、紙の白い所だけ黄色くなる */
-  pointer-events: none;
-  transition: top .2s ease;
+/* 帯（くの字にも曲げられるよう、SVG で形を描く） */
+#bandSvg {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: 2;
+  pointer-events: none; overflow: hidden;
+  mix-blend-mode: multiply; /* 記号の黒い線はそのまま、紙の白い所だけ色がつく */
 }
-/* 編む向きの矢印（帯の中にうすく並べる） */
-#band.way-left {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M24 4 L16 10 L24 16' fill='none' stroke='%23b86e00' stroke-opacity='.4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: repeat-x; background-position: center; background-size: auto 55%;
-}
-#band.way-right {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M16 4 L24 10 L16 16' fill='none' stroke='%23b86e00' stroke-opacity='.4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: repeat-x; background-position: center; background-size: auto 55%;
-}
+#bandP { fill: var(--band); }
+.shade-p { fill: var(--shade); }
+#bandArrows path { fill: none; stroke: #b86e00; stroke-opacity: .45; stroke-linecap: round; stroke-linejoin: round; }
 #rowWay { display: block; font-size: 22px; line-height: 1; color: #b86e00; }
-.shade { position: absolute; left: 0; right: 0; background: var(--shade); pointer-events: none; transition: top .2s ease, height .2s ease; }
-#shadeTop { top: 0; }
-#shadeBottom { bottom: 0; }
 
 /* 調整モード */
-.adjusting #band { pointer-events: auto; touch-action: none; transition: none; cursor: grab; outline: 2px dashed var(--accent); }
-.adjusting .shade { transition: none; }
+.adjusting #bandP { pointer-events: visiblePainted; cursor: grab; touch-action: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
 .adjusting #stage { cursor: crosshair; }
 .handle { display: none; }
 .adjusting .handle {
-  display: block; position: absolute; left: 50%;
-  width: 26px; height: 26px; margin-left: -13px;
+  display: block; position: absolute; z-index: 4;
+  width: 26px; height: 26px; margin: -13px 0 0 -13px;
   border-radius: 50%; background: var(--accent); border: 3px solid #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,.35);
   touch-action: none; cursor: ns-resize;
 }
 .adjusting .handle::before { content: ""; position: absolute; inset: -12px; } /* 指で触りやすく */
-.handle.top { top: -15px; }
-.handle.bottom { bottom: -15px; }
+.adjusting .handle.bend { background: #2b6cb0; cursor: move; }
+.adjusting .handle.bend::after { content: "曲げ"; position: absolute; left: 50%; top: 24px; transform: translateX(-50%); font-size: 11px; color: #2b6cb0; background: #fff; padding: 0 4px; border-radius: 6px; white-space: nowrap; }
 
 .panel {
   background: var(--surface); border-bottom: 1px solid var(--line);

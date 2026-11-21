@@ -967,6 +967,7 @@ function setRotation(deg) {
 function applyZoom() {
   const w = $('scroller').clientWidth;
   $('stage').style.width = Math.round(w * st().zoom) + 'px';
+  renderBand(); // 大きさが変わったので、帯を描き直す
 }
 
 // 指定した点（画面上の位置）を中心に拡大・縮小する
@@ -1023,27 +1024,84 @@ function setupPinch() {
   }, { passive: false });
 }
 
-function render() {
+/* --- 帯の形 ---
+   s.y  : 頂点（折れ目）での帯の上のふち   s.h : 帯の太さ（たての長さ）
+   s.ax : 頂点の横の位置（0〜1、ふつうは真ん中 0.5）
+   s.bend : 左右のはしが頂点よりどれだけ下がるか（マイナスなら上がる）。0 ならまっすぐ
+   くの字（Vの字）の段の編み図にも、帯を折り曲げて合わせられる。 */
+const apexX = (s) => (s.ax === undefined ? 0.5 : s.ax);
+// 横の位置 x での、帯の上のふちの高さ
+function bandTopAt(s, x) {
+  const b = s.bend || 0;
+  if (!b) return s.y;
+  const ax = apexX(s);
+  return s.y + b * (x < ax ? (ax - x) / ax : (x - ax) / (1 - ax));
+}
+const isBent = (s) => Math.abs(s.bend || 0) > 0.0005;
+
+// 今の段の編む向き（true = ←、false = →、null = 矢印なし）
+function rowLeft(s) {
+  const way = s.way || 'none';
+  if (way === 'none') return null;
+  let left = !s.wayFlip;                               // 1段目は右から左（←）がふつう
+  if (way === 'flat' && s.row % 2 === 0) left = !left; // 往復編みは段ごとに反対向き
+  return left;
+}
+
+function renderBand() {
   const s = st();
-  const band = $('band');
-  band.style.top = (s.y * 100) + '%';
-  band.style.height = (s.h * 100) + '%';
+  const stage = $('stage');
+  const W = stage.offsetWidth, H = stage.offsetHeight;
+  if (!W || !H) return;
+  const svg = $('bandSvg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const ax = apexX(s) * W, h = s.h * H;
+  const tL = bandTopAt(s, 0) * H, tA = s.y * H, tR = bandTopAt(s, 1) * H;
+  const f = (v) => v.toFixed(1);
+  $('bandP').setAttribute('d', `M0 ${f(tL)} L${f(ax)} ${f(tA)} L${W} ${f(tR)} L${W} ${f(tR + h)} L${f(ax)} ${f(tA + h)} L0 ${f(tL + h)} Z`);
 
   const showShade = s.dim && !adjusting;
-  $('shadeTop').hidden = !showShade;
-  $('shadeBottom').hidden = !showShade;
-  $('shadeTop').style.height = (s.y * 100) + '%';
-  $('shadeBottom').style.top = ((s.y + s.h) * 100) + '%';
+  $('shadeTopP').setAttribute('d', showShade ? `M0 0 L${W} 0 L${W} ${f(tR)} L${f(ax)} ${f(tA)} L0 ${f(tL)} Z` : '');
+  $('shadeBotP').setAttribute('d', showShade ? `M0 ${f(tL + h)} L${f(ax)} ${f(tA + h)} L${W} ${f(tR + h)} L${W} ${H} L0 ${H} Z` : '');
 
-  // 編む向きの矢印：往復編みは段ごとに反対向き、輪編みはいつも同じ向き
-  const way = s.way || 'none';
-  let left = null;
-  if (way !== 'none') {
-    left = !s.wayFlip;                                  // 1段目は右から左（←）がふつう
-    if (way === 'flat' && s.row % 2 === 0) left = !left;
+  // 編む向きの矢印を、帯の真ん中の線にそって並べる
+  const g = $('bandArrows');
+  g.innerHTML = '';
+  const left = rowLeft(s);
+  if (left !== null) {
+    const size = clamp(h * 0.5, 6, 36);
+    const gap = size * 2.6;
+    const pts = [[0, tL + h / 2], [ax, tA + h / 2], [W, tR + h / 2]];
+    let html = '';
+    let carry = gap / 2;
+    for (let i = 0; i < 2; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (len < 1) continue;
+      let ang = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+      if (left) ang += 180;
+      for (let d = carry; d < len; d += gap) {
+        const x = x1 + ((x2 - x1) * d) / len, y = y1 + ((y2 - y1) * d) / len;
+        html += `<path transform="translate(${f(x)} ${f(y)}) rotate(${ang.toFixed(1)})" stroke-width="${Math.max(1.5, size * 0.14).toFixed(1)}" d="M${f(-size * 0.25)} ${f(-size / 2)} L${f(size * 0.25)} 0 L${f(-size * 0.25)} ${f(size / 2)}"/>`;
+        carry = d + gap - len;
+      }
+    }
+    g.innerHTML = html;
   }
-  band.classList.toggle('way-left', left === true);
-  band.classList.toggle('way-right', left === false);
+
+  // 調整用の持ち手：上下のふちは頂点に、「曲げ」は右はしの近くに置く
+  const place = (id, xFrac, yFrac) => { $(id).style.left = (xFrac * 100) + '%'; $(id).style.top = (yFrac * 100) + '%'; };
+  place('hTop', apexX(s), s.y);
+  place('hBot', apexX(s), s.y + s.h);
+  const bx = Math.max(apexX(s) + 0.05, 0.9);
+  place('hBend', bx, bandTopAt(s, bx) + s.h / 2);
+}
+
+function render() {
+  const s = st();
+  renderBand();
+  const left = rowLeft(s);
+  const way = s.way || 'none';
   $('rowWay').hidden = left === null;
   $('rowWay').textContent = left ? '←' : '→';
   document.querySelectorAll('[data-way]').forEach((b) => b.classList.toggle('on', b.dataset.way === way));
@@ -1079,7 +1137,7 @@ const r5 = (v) => Math.round(v * 1e5) / 1e5;
 function rememberRow() {
   const s = st();
   if (!s.rowPos) s.rowPos = {};
-  s.rowPos[s.row] = { p: s.page, y: r5(s.y), h: r5(s.h) };
+  s.rowPos[s.row] = { p: s.page, y: r5(s.y), h: r5(s.h), b: r5(s.bend || 0), a: r5(apexX(s)) };
 }
 
 function stepRow(n) {
@@ -1091,6 +1149,7 @@ function stepRow(n) {
     s.row += n;
     s.y = saved.y;
     s.h = saved.h;
+    if (saved.b !== undefined) { s.bend = saved.b; s.ax = saved.a; }
     afterStep(n);
     if (saved.p !== s.page) showPage(saved.p);
     return;
@@ -1102,7 +1161,7 @@ function stepRow(n) {
   }
   s.y = clamp(ny, 0, 1 - s.h);
   s.row += n;
-  if (s.snap !== false) snapBand(0.25, true);
+  if (s.snap !== false && !isBent(s)) snapBand(0.25, true); // 罫線合わせは、まっすぐな帯のときだけ
   afterStep(n);
 }
 
@@ -1129,41 +1188,51 @@ function setAdjusting(on) {
 
 /* --- 帯のドラッグ（調整モードのとき） --- */
 function setupBandDrag() {
-  const band = $('band');
-  band.addEventListener('pointerdown', (e) => {
+  // 帯そのもの（動かす）と、3つの持ち手（上のふち・下のふち・曲げ）
+  const startDrag = (e, el, mode) => {
     if (!adjusting) return;
     e.preventDefault();
     e.stopPropagation();
-    const mode = e.target.classList.contains('top') ? 'top'
-      : e.target.classList.contains('bottom') ? 'bottom' : 'move';
-    const H = $('stage').getBoundingClientRect().height;
-    const startY = e.clientY;
+    const rect = $('stage').getBoundingClientRect();
+    const W = rect.width, H = rect.height;
+    const sx = e.clientX, sy = e.clientY;
     const s = st();
-    const y0 = s.y, h0 = s.h;
-    band.setPointerCapture(e.pointerId);
+    const y0 = s.y, h0 = s.h, b0 = s.bend || 0, a0 = apexX(s);
+    const bx = Math.max(a0 + 0.05, 0.9);           // 「曲げ」の持ち手の横の位置
+    const k = (bx - a0) / (1 - a0);                // そこでの曲がりの効き方
+    el.setPointerCapture(e.pointerId);
 
     const onMove = (ev) => {
-      const d = (ev.clientY - startY) / H;
+      const d = (ev.clientY - sy) / H;
       if (mode === 'move') {
         s.y = clamp(y0 + d, 0, 1 - h0);
+        // 曲げているときは、横にずらすと折れ目の位置も動く
+        if (isBent(s)) s.ax = clamp(a0 + (ev.clientX - sx) / W, 0.05, 0.85);
       } else if (mode === 'top') {
         const ny = clamp(y0 + d, 0, y0 + h0 - MIN_BAND);
         s.h = h0 + (y0 - ny);
         s.y = ny;
-      } else {
+      } else if (mode === 'bottom') {
         s.h = clamp(h0 + d, MIN_BAND, 1 - y0);
+      } else if (mode === 'bend') {
+        s.bend = clamp(b0 + d / k, -1, 1);
       }
-      render();
+      renderBand();
     };
     const onUp = () => {
-      band.removeEventListener('pointermove', onMove);
-      band.removeEventListener('pointerup', onUp);
-      band.removeEventListener('pointercancel', onUp);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
       scheduleSave();
     };
-    band.addEventListener('pointermove', onMove);
-    band.addEventListener('pointerup', onUp);
-    band.addEventListener('pointercancel', onUp);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+  };
+  $('bandP').addEventListener('pointerdown', (e) => startDrag(e, $('bandP'), 'move'));
+  ['hTop', 'hBot', 'hBend'].forEach((id) => {
+    const el = $(id);
+    el.addEventListener('pointerdown', (e) => startDrag(e, el, el.dataset.drag));
   });
 
   // 調整モード中に編み図をタップ → そこへ帯を移動
@@ -1179,8 +1248,10 @@ function setupBandDrag() {
     if (moved > 8) return; // スクロールしただけ
     const rect = $('stage').getBoundingClientRect();
     const s = st();
+    const fx = (e.clientX - rect.left) / rect.width;
     const fy = (e.clientY - rect.top) / rect.height;
-    s.y = clamp(fy - s.h / 2, 0, 1 - s.h);
+    // タップした場所が帯の真ん中に来るように（曲げているときは、その横の位置で合わせる）
+    s.y = clamp(fy - s.h / 2 - (bandTopAt(s, fx) - s.y), 0, 1 - s.h);
     render();
     scheduleSave();
   });
@@ -1359,7 +1430,13 @@ function setup() {
     down:  (s, px) => { s.y = clamp(s.y + px, 0, 1 - s.h); },
     thin:  (s, px) => { if (s.h - px >= MIN_BAND) { s.h -= px; s.y += px / 2; } },
     thick: (s, px) => { s.h = Math.min(1, s.h + px); s.y = clamp(s.y - px / 2, 0, 1 - s.h); },
+    // くの字：両はしを上げ下げ（2ピクセルずつ）、折れ目を左右へ
+    bendUp:   (s, px) => { s.bend = clamp((s.bend || 0) - px * 2, -1, 1); },
+    bendDown: (s, px) => { s.bend = clamp((s.bend || 0) + px * 2, -1, 1); },
+    apexL:    (s) => { s.ax = clamp(apexX(s) - 1 / $('stage').offsetWidth, 0.05, 0.85); },
+    apexR:    (s) => { s.ax = clamp(apexX(s) + 1 / $('stage').offsetWidth, 0.05, 0.85); },
   };
+  $('straightBtn').onclick = () => { const s = st(); s.bend = 0; s.ax = 0.5; render(); scheduleSave(); };
   document.querySelectorAll('[data-nudge]').forEach((btn) => {
     const fn = nudges[btn.dataset.nudge];
     const once = () => {

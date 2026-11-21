@@ -73,10 +73,17 @@
 
       <!-- 帯タブ -->
       <div class="pane" data-pane="band">
-        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。2本指で拡大すると合わせやすくなります。</p>
+        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。くの字の段は、青い「曲げ」の丸をドラッグするか「曲げ」ボタンで帯を折り曲げ、「頂点」で折れ目の位置を合わせます。</p>
         <div class="nudge-row">
           <div class="nudge"><span>位置</span><button data-nudge="up" aria-label="帯を上へ">▲</button><button data-nudge="down" aria-label="帯を下へ">▼</button></div>
           <div class="nudge"><span>太さ</span><button data-nudge="thin" aria-label="帯を細く">－</button><button data-nudge="thick" aria-label="帯を太く">＋</button></div>
+        </div>
+        <div class="nudge-row">
+          <div class="nudge"><span>曲げ</span><button data-nudge="bendUp" aria-label="両はしを上へ">∧</button><button data-nudge="bendDown" aria-label="両はしを下へ">∨</button></div>
+          <div class="nudge"><span>頂点</span><button data-nudge="apexL" aria-label="頂点を左へ">◀</button><button data-nudge="apexR" aria-label="頂点を右へ">▶</button></div>
+        </div>
+        <div class="panel-row">
+          <button id="straightBtn" class="sub">まっすぐに戻す</button>
         </div>
         <div class="panel-row">
           <button id="snapBtn" class="sub">罫線にぴったり</button>
@@ -157,12 +164,15 @@
         <canvas id="pageCanvas" aria-label="編み図"></canvas>
         <canvas id="inkCanvas" aria-hidden="true"></canvas>
         <div id="guides"></div>
-        <div id="shadeTop" class="shade"></div>
-        <div id="shadeBottom" class="shade"></div>
-        <div id="band">
-          <div class="handle top"></div>
-          <div class="handle bottom"></div>
-        </div>
+        <svg id="bandSvg" aria-hidden="true">
+          <path id="shadeTopP" class="shade-p"></path>
+          <path id="shadeBotP" class="shade-p"></path>
+          <path id="bandP"></path>
+          <g id="bandArrows"></g>
+        </svg>
+        <div id="hTop" class="handle" data-drag="top"></div>
+        <div id="hBot" class="handle" data-drag="bottom"></div>
+        <div id="hBend" class="handle bend" data-drag="bend"></div>
       </div>
     </div>
 
