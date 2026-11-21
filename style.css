@@ -104,7 +104,31 @@ button { font: inherit; color: inherit; cursor: pointer; }
   pointer-events: none; overflow: hidden;
   mix-blend-mode: multiply; /* 記号の黒い線はそのまま、紙の白い所だけ色がつく */
 }
-#bandP { fill: var(--band); }
+#bandP { fill: var(--band); fill-rule: evenodd; }
+.shade-p { fill-rule: evenodd; }
+/* トリミング */
+#cropBox { display: none; }
+.cropping #cropBox {
+  display: block; position: absolute; z-index: 5; touch-action: none; cursor: move;
+  outline: 2px solid #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 0 100vmax rgba(0, 0, 0, .5);
+}
+.cropping #bandSvg, .cropping .handle, .cropping #inkCanvas { display: none !important; }
+.crop-h {
+  position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%;
+  background: var(--accent); border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35);
+}
+.crop-h::before { content: ""; position: absolute; inset: -12px; } /* 指で触りやすく */
+.crop-h[data-corner="tl"] { left: 0; top: 0; cursor: nwse-resize; }
+.crop-h[data-corner="tr"] { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-h[data-corner="bl"] { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-h[data-corner="br"] { left: 100%; top: 100%; cursor: nwse-resize; }
+#cropPanel .primary { flex: 1; }
+#stage { overflow: hidden; }
+
+/* 帯の形（横・円）によって、出すボタンを変える */
+#adjustPanel.ring-mode .line-only { display: none !important; }
+#adjustPanel:not(.ring-mode) .ring-only { display: none !important; }
+.ring-mode-stage .handle { cursor: ew-resize; }
 .shade-p { fill: var(--shade); }
 #bandArrows path { fill: none; stroke: #b86e00; stroke-opacity: .45; stroke-linecap: round; stroke-linejoin: round; }
 #rowWay { display: block; font-size: 22px; line-height: 1; color: #b86e00; }

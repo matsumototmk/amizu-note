@@ -73,21 +73,33 @@
 
       <!-- 帯タブ -->
       <div class="pane" data-pane="band">
-        <p class="panel-help">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。くの字の段は、「頂点」で折れ目を編み図の中心に合わせてから、「45°にする」か、折れ目の横の青い丸をドラッグして帯を曲げます（青い丸は指のある所を帯が通るように動きます）。</p>
-        <div class="nudge-row">
-          <div class="nudge"><span>位置</span><button data-nudge="up" aria-label="帯を上へ">▲</button><button data-nudge="down" aria-label="帯を下へ">▼</button></div>
-          <div class="nudge"><span>太さ</span><button data-nudge="thin" aria-label="帯を細く">－</button><button data-nudge="thick" aria-label="帯を太く">＋</button></div>
+        <p class="panel-help line-only">ドラッグ・タップで大まかに合わせ、下のボタンで細かく調整します。くの字の段は、「頂点」で折れ目を編み図の中心に合わせてから、「45°にする」か、折れ目の横の青い丸をドラッグして帯を曲げます（青い丸は指のある所を帯が通るように動きます）。</p>
+        <p class="panel-help ring-only">円の編み図用です。帯をドラッグするか編み図をタップして、円の中心を編み図の中心（わ）に合わせます。右側の赤い丸を左右に動かすと、内側の丸（左の丸）と1段の太さ（右の丸）が変わります。1段目は内側の円を0にします。</p>
+        <div class="panel-row">
+          <span>帯の形</span>
+          <div class="seg">
+            <button data-shape="line">横（くの字）</button>
+            <button data-shape="ring">円</button>
+          </div>
         </div>
         <div class="nudge-row">
+          <div class="nudge"><span id="posLabel">位置</span><button data-nudge="up" aria-label="上へ">▲</button><button data-nudge="down" aria-label="下へ">▼</button></div>
+          <div class="nudge"><span>太さ</span><button data-nudge="thin" aria-label="帯を細く">－</button><button data-nudge="thick" aria-label="帯を太く">＋</button></div>
+        </div>
+        <div class="nudge-row line-only">
           <div class="nudge"><span>曲げ</span><button data-nudge="bendUp" aria-label="両はしを上へ">∧</button><button data-nudge="bendDown" aria-label="両はしを下へ">∨</button></div>
           <div class="nudge"><span>頂点</span><button data-nudge="apexL" aria-label="頂点を左へ">◀</button><button data-nudge="apexR" aria-label="頂点を右へ">▶</button></div>
         </div>
-        <div class="panel-row">
+        <div class="nudge-row ring-only">
+          <div class="nudge"><span>中心</span><button data-nudge="ringL" aria-label="中心を左へ">◀</button><button data-nudge="ringR" aria-label="中心を右へ">▶</button></div>
+          <div class="nudge"><span>内側の円</span><button data-nudge="ringIn" aria-label="内側の円を小さく">－</button><button data-nudge="ringOut" aria-label="内側の円を大きく">＋</button></div>
+        </div>
+        <div class="panel-row line-only">
           <button id="bend45Btn" class="sub">∨ 45°にする</button>
           <button id="straightBtn" class="sub">まっすぐに戻す</button>
         </div>
         <div class="panel-row">
-          <button id="snapBtn" class="sub">罫線にぴったり</button>
+          <button id="snapBtn" class="sub line-only">罫線にぴったり</button>
           <button id="multiBtn" class="sub">何段分かで合わせる</button>
         </div>
       </div>
@@ -107,6 +119,9 @@
       <div class="panel-row">
         <button id="rot90" class="sub">⟳ 90°回転</button>
         <button id="rotReset" class="sub">傾きを0に戻す</button>
+      </div>
+      <div class="panel-row">
+        <button id="cropBtn" class="sub">✂ トリミング（いらない所を切り取る）</button>
       </div>
       </div>
 
@@ -137,6 +152,16 @@
       <p class="panel-help">帯の高さや位置を段ごとに合わせると、その段の分を覚えます。2回目からは「次の段」だけで、それぞれの段にぴったり動きます。</p>
       <button id="resetRowsBtn" class="sub">覚えた段の位置を全部忘れる</button>
       <button id="editChartBtn" class="sub" hidden>✎ この編み図を描き直す</button>
+      </div>
+    </div>
+
+    <!-- トリミング -->
+    <div id="cropPanel" class="panel" hidden>
+      <p class="panel-help">四すみの丸をドラッグして、残したい範囲を囲みます。囲みの中をドラッグすると全体が動きます。元の画像は消えないので、あとで「全体に戻す」で元に戻せます。</p>
+      <div class="panel-row">
+        <button id="cropReset" class="sub">全体に戻す</button>
+        <button id="cropCancel" class="sub">やめる</button>
+        <button id="cropOk" class="primary">切り取る</button>
       </div>
     </div>
 
@@ -174,6 +199,10 @@
         <div id="hTop" class="handle" data-drag="top"></div>
         <div id="hBot" class="handle" data-drag="bottom"></div>
         <div id="hBend" class="handle bend" data-drag="bend"></div>
+        <div id="cropBox">
+          <div class="crop-h" data-corner="tl"></div><div class="crop-h" data-corner="tr"></div>
+          <div class="crop-h" data-corner="bl"></div><div class="crop-h" data-corner="br"></div>
+        </div>
       </div>
     </div>
 

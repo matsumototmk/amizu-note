@@ -514,6 +514,9 @@ async function openViewer(id, isNew = false) {
   $('notesSheet').hidden = true;
   inkUndo = [];
   setInking(false);
+  cropping = false;
+  $('viewer').classList.remove('cropping');
+  $('cropPanel').hidden = true;
   renderCounters();
 
   $('home').hidden = true;
@@ -528,6 +531,7 @@ async function openViewer(id, isNew = false) {
 async function closeViewer() {
   setAdjusting(false);
   setInking(false);
+  if (cropping) { cropping = false; $('viewer').classList.remove('cropping'); $('cropPanel').hidden = true; }
   await saveNow();
   releaseWakeLock();
   cur = null;
@@ -569,20 +573,141 @@ function drawPage() {
   const cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
   const bw = w * cos + h * sin;   // 回したあとに収まる大きさ
   const bh = w * sin + h * cos;
-  const k = Math.min(1, MAX_SIDE / Math.max(bw, bh));
+  // トリミング（切り取り）：回したあとのページの中で、見せる範囲（0〜1の割合）
+  const crop = cropping ? FULL : pageCrop(s);
+  const k = Math.min(1, MAX_SIDE / Math.max(bw * crop.w, bh * crop.h)); // 切り取ったぶん、細かく描ける
+  const fw = bw * k, fh = bh * k;           // ページ全体の大きさ（キャンバスの単位）
+  const ox = crop.x * fw, oy = crop.y * fh; // 見せる範囲の左上
   const c = $('pageCanvas');
-  c.width = Math.round(bw * k);
-  c.height = Math.round(bh * k);
-  pageXf = { rad, k, w, h, cw: c.width, ch: c.height };
+  c.width = Math.max(1, Math.round(fw * crop.w));
+  c.height = Math.max(1, Math.round(fh * crop.h));
+  pageXf = { rad, k, w, h, cw: c.width, ch: c.height, fw, fh, ox, oy };
   const g = c.getContext('2d', { willReadFrequently: true });
   g.fillStyle = '#fff';
   g.fillRect(0, 0, c.width, c.height);
   g.imageSmoothingQuality = 'high';
-  g.translate(c.width / 2, c.height / 2);
+  g.translate(fw / 2 - ox, fh / 2 - oy);
   g.rotate(rad);
   g.scale(k, k);
   g.drawImage(srcImg, -w / 2, -h / 2);
   drawInk();
+}
+
+/* ---------- トリミング（切り取り） ----------
+   元の画像はそのまま残し、「見せる範囲」だけを覚える（あとで全体に戻せる）。
+   s.crops = { ページ番号: { x, y, w, h } }  … 傾きを直したあとのページ全体に対する割合 */
+const FULL = { x: 0, y: 0, w: 1, h: 1 };
+let cropping = false;
+let cropBox = null;     // トリミング中の囲み（ページ全体に対する割合）
+const pageCrop = (s) => (s.crops && s.crops[s.page]) || FULL;
+
+// 見せる範囲が変わったので、帯の位置などを「同じ編み図の場所」を指すように付けかえる
+function remapBand(o, n) {
+  const mx = (x) => (o.x + x * o.w - n.x) / n.w;   // 古い見え方の横位置 → 新しい見え方
+  const my = (y) => (o.y + y * o.h - n.y) / n.h;
+  const sw = o.w / n.w, sh = o.h / n.h;
+  const fix = (p) => {
+    if (p.y !== undefined) p.y = my(p.y);
+    if (p.h !== undefined) p.h *= sh;
+    const ax = p.a !== undefined ? 'a' : 'ax';
+    if (p[ax] !== undefined) p[ax] = mx(p[ax]);
+    const bd = p.b !== undefined ? 'b' : 'bend';
+    if (p[bd]) p[bd] *= (o.h * n.w) / (o.w * n.h); // 腕の傾き（画面上の角度）を変えない
+    if (p.cx !== undefined) { p.cx = mx(p.cx); p.cy = my(p.cy); p.rr *= sw; p.rt *= sw; }
+  };
+  const s = st();
+  if (s.ax === undefined) s.ax = 0.5;
+  fix(s);
+  Object.values(s.rowPos || {}).forEach((p) => { if (p.p === s.page) fix(p); });
+}
+
+function setCropping(on) {
+  const s = st();
+  if (on) {
+    if (adjusting) setAdjusting(false);
+    if (inking) setInking(false);
+    cropBox = Object.assign({}, pageCrop(s));
+    if (cropBox.w === 1 && cropBox.h === 1) cropBox = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
+  }
+  cropping = on;
+  $('viewer').classList.toggle('cropping', on);
+  $('cropPanel').hidden = !on;
+  drawPage();
+  applyZoom();
+  render();
+  renderCrop();
+  if (!on) scrollToBand(false);
+}
+
+function renderCrop() {
+  const b = $('cropBox');
+  if (!cropping || !cropBox) return;
+  b.style.left = (cropBox.x * 100) + '%';
+  b.style.top = (cropBox.y * 100) + '%';
+  b.style.width = (cropBox.w * 100) + '%';
+  b.style.height = (cropBox.h * 100) + '%';
+}
+
+async function applyCrop(next) {
+  const s = st();
+  const old = pageCrop(s);
+  remapBand(old, next);
+  if (!s.crops) s.crops = {};
+  if (next === FULL) delete s.crops[s.page]; else s.crops[s.page] = next;
+  // 一覧の小さな絵は1ページ目の画像のまま（元の画像は消さない）
+  await setCropping(false);
+  scheduleSave();
+}
+
+function setupCrop() {
+  $('cropBtn').onclick = () => setCropping(true);
+  $('cropCancel').onclick = () => setCropping(false);
+  $('cropReset').onclick = () => applyCrop(FULL);
+  $('cropOk').onclick = () => {
+    const c = cropBox;
+    const r5c = (v) => Math.round(v * 1e5) / 1e5;
+    applyCrop({ x: r5c(c.x), y: r5c(c.y), w: r5c(c.w), h: r5c(c.h) });
+    toast('切り取りました。「全体に戻す」でいつでも元に戻せます');
+  };
+  // 囲みを動かす（中をドラッグ）・大きさを変える（四すみの丸をドラッグ）
+  const MIN = 0.05;
+  $('cropBox').addEventListener('pointerdown', (e) => {
+    if (!cropping) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.target.closest('[data-corner]');
+    const corner = el ? el.dataset.corner : 'move';
+    const rect = $('stage').getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const b0 = Object.assign({}, cropBox);
+    const box = $('cropBox');
+    box.setPointerCapture(e.pointerId);
+    const onMove = (ev) => {
+      const dx = (ev.clientX - sx) / rect.width, dy = (ev.clientY - sy) / rect.height;
+      const b = Object.assign({}, b0);
+      if (corner === 'move') {
+        b.x = clamp(b0.x + dx, 0, 1 - b0.w);
+        b.y = clamp(b0.y + dy, 0, 1 - b0.h);
+      } else {
+        let x1 = b0.x, y1 = b0.y, x2 = b0.x + b0.w, y2 = b0.y + b0.h;
+        if (corner.includes('l')) x1 = clamp(x1 + dx, 0, x2 - MIN);
+        if (corner.includes('r')) x2 = clamp(x2 + dx, x1 + MIN, 1);
+        if (corner.includes('t')) y1 = clamp(y1 + dy, 0, y2 - MIN);
+        if (corner.includes('b')) y2 = clamp(y2 + dy, y1 + MIN, 1);
+        Object.assign(b, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+      }
+      cropBox = b;
+      renderCrop();
+    };
+    const onUp = () => {
+      box.removeEventListener('pointermove', onMove);
+      box.removeEventListener('pointerup', onUp);
+      box.removeEventListener('pointercancel', onUp);
+    };
+    box.addEventListener('pointermove', onMove);
+    box.addEventListener('pointerup', onUp);
+    box.addEventListener('pointercancel', onUp);
+  });
 }
 
 /* ---------- 編み図への書き込み ----------
@@ -612,9 +737,9 @@ const pageInk = () => {
 // 画面の位置 → 元画像の中の位置（0〜1）
 function toSource(clientX, clientY) {
   const r = $('stage').getBoundingClientRect();
-  const { rad, k, w, h, cw, ch } = pageXf;
-  const dx = ((clientX - r.left) / r.width) * cw - cw / 2;
-  const dy = ((clientY - r.top) / r.height) * ch - ch / 2;
+  const { rad, k, w, h, cw, ch, fw, fh, ox, oy } = pageXf;
+  const dx = ((clientX - r.left) / r.width) * cw + ox - fw / 2;
+  const dy = ((clientY - r.top) / r.height) * ch + oy - fh / 2;
   const cos = Math.cos(rad), sin = Math.sin(rad);
   const x = (dx * cos + dy * sin) / k + w / 2;
   const y = (-dx * sin + dy * cos) / k + h / 2;
@@ -624,14 +749,14 @@ function toSource(clientX, clientY) {
 function drawInk() {
   const ic = $('inkCanvas');
   if (!pageXf || !cur) { ic.width = ic.height = 0; return; }
-  const { rad, k, w, h, cw, ch } = pageXf;
+  const { rad, k, w, h, cw, ch, fw, fh, ox, oy } = pageXf;
   if (ic.width !== cw || ic.height !== ch) { ic.width = cw; ic.height = ch; }
   const g = ic.getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, cw, ch);
   const strokes = (cur.ink && cur.ink[st().page]) || [];
   if (!strokes.length) return;
-  g.translate(cw / 2, ch / 2);
+  g.translate(fw / 2 - ox, fh / 2 - oy);
   g.rotate(rad);
   g.scale(k, k);
   g.translate(-w / 2, -h / 2);
@@ -724,6 +849,7 @@ function renderInkPanel() {
 
 function setInking(on) {
   if (on && adjusting) setAdjusting(false);
+  if (on && cropping) setCropping(false);
   inking = on;
   inkStroke = null;
   $('viewer').classList.toggle('inking', on);
@@ -965,7 +1091,16 @@ function setRotation(deg) {
 }
 
 function applyZoom() {
-  const w = $('scroller').clientWidth;
+  const sc = $('scroller');
+  const w = sc.clientWidth;
+  if (cropping) {
+    // トリミング中は、四すみに届くよう、ページ全体を画面に収める
+    const c = $('pageCanvas');
+    const fit = Math.min(w, (sc.clientHeight - 24) * (c.width / Math.max(1, c.height)));
+    $('stage').style.width = Math.round(fit) + 'px';
+    sc.scrollTo(0, 0);
+    return;
+  }
   $('stage').style.width = Math.round(w * st().zoom) + 'px';
   renderBand(); // 大きさが変わったので、帯を描き直す
 }
@@ -1055,9 +1190,16 @@ function renderBand() {
   if (!W || !H) return;
   const svg = $('bandSvg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const isRing = s.shape === 'ring';
+  $('adjustPanel').classList.toggle('ring-mode', isRing);
+  $('viewer').classList.toggle('ring-mode-stage', isRing);
+  $('hBend').hidden = isRing;
+  $('posLabel').textContent = isRing ? '中心' : '位置';
+  document.querySelectorAll('[data-shape]').forEach((b) => b.classList.toggle('on', b.dataset.shape === (isRing ? 'ring' : 'line')));
+  if (isRing) { renderRing(s, W, H); return; }
   const ax = apexX(s) * W, h = s.h * H;
   const tL = bandTopAt(s, 0) * H, tA = s.y * H, tR = bandTopAt(s, 1) * H;
-  const f = (v) => v.toFixed(1);
+  const f = fx1;
   $('bandP').setAttribute('d', `M0 ${f(tL)} L${f(ax)} ${f(tA)} L${W} ${f(tR)} L${W} ${f(tR + h)} L${f(ax)} ${f(tA + h)} L0 ${f(tL + h)} Z`);
 
   const showShade = s.dim && !adjusting;
@@ -1081,8 +1223,7 @@ function renderBand() {
       let ang = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
       if (left) ang += 180;
       for (let d = carry; d < len; d += gap) {
-        const x = x1 + ((x2 - x1) * d) / len, y = y1 + ((y2 - y1) * d) / len;
-        html += `<path transform="translate(${f(x)} ${f(y)}) rotate(${ang.toFixed(1)})" stroke-width="${Math.max(1.5, size * 0.14).toFixed(1)}" d="M${f(-size * 0.25)} ${f(-size / 2)} L${f(size * 0.25)} 0 L${f(-size * 0.25)} ${f(size / 2)}"/>`;
+        html += chevron(x1 + ((x2 - x1) * d) / len, y1 + ((y2 - y1) * d) / len, ang, size);
         carry = d + gap - len;
       }
     }
@@ -1097,6 +1238,61 @@ function renderBand() {
   place('hBend', bx, bandTopAt(s, bx) + s.h / 2);
 }
 
+const fx1 = (v) => v.toFixed(1);
+// 向きの矢印1つ（くの字の「>」を、ang 度の向きに）
+function chevron(x, y, ang, size) {
+  const f = fx1;
+  return `<path transform="translate(${f(x)} ${f(y)}) rotate(${ang.toFixed(1)})" stroke-width="${Math.max(1.5, size * 0.14).toFixed(1)}" d="M${f(-size * 0.25)} ${f(-size / 2)} L${f(size * 0.25)} 0 L${f(-size * 0.25)} ${f(size / 2)}"/>`;
+}
+
+/* --- 円の帯（ドーナツ形） ---
+   s.cx, s.cy : 円の中心（ページの幅・高さに対する割合）
+   s.rr : 内側の円の半径、 s.rt : 1段の太さ（どちらもページの幅に対する割合）
+   1段目は rr = 0 で、中心の丸い部分になる。次の段へ進むと rr が rt ずつ大きくなる。 */
+function renderRing(s, W, H) {
+  const f = fx1;
+  const cx = s.cx * W, cy = s.cy * H, r = s.rr * W, R = (s.rr + s.rt) * W;
+  const circ = (rad) => (rad <= 0.5 ? '' : `M${f(cx - rad)} ${f(cy)} a${f(rad)} ${f(rad)} 0 1 0 ${f(2 * rad)} 0 a${f(rad)} ${f(rad)} 0 1 0 ${f(-2 * rad)} 0 Z`);
+  $('bandP').setAttribute('d', circ(R) + circ(r));
+  const showShade = s.dim && !adjusting;
+  // 外側（大きな四角から外の円をくりぬく）＋ 内側の円の中を暗くする
+  $('shadeTopP').setAttribute('d', showShade ? `M0 0 H${W} V${H} H0 Z` + circ(R) + circ(r) : '');
+  $('shadeBotP').setAttribute('d', '');
+
+  // 向きの矢印を円にそって並べる（← は反時計まわり、→ は時計まわり）
+  const g = $('bandArrows');
+  g.innerHTML = '';
+  const left = rowLeft(s);
+  const m = (r + R) / 2, size = clamp((R - r) * 0.5, 6, 36);
+  if (left !== null && m > size) {
+    const n = Math.max(3, Math.floor((2 * Math.PI * m) / (size * 2.6)));
+    let html = '';
+    for (let i = 0; i < n; i++) {
+      const t = (i / n) * Math.PI * 2;
+      // 画面は下向きが +y なので、角度が増える向きが時計まわり
+      let ang = (Math.atan2(Math.cos(t), -Math.sin(t)) * 180) / Math.PI; // 時計まわりの向き
+      if (left) ang += 180;
+      html += chevron(cx + m * Math.cos(t), cy + m * Math.sin(t), ang, size);
+    }
+    g.innerHTML = html;
+  }
+
+  // 持ち手：中心から右に、内側の円のふち（左の丸）と外側のふち（右の丸）
+  const place = (id, x, y) => { $(id).style.left = ((x / W) * 100) + '%'; $(id).style.top = ((y / H) * 100) + '%'; };
+  place('hTop', cx + r, cy);
+  place('hBot', cx + R, cy);
+}
+
+// 円の帯にするとき、まだ中心が決まっていなければ、いま見えている所の真ん中に置く
+function initRing(s) {
+  if (s.cx !== undefined) return;
+  const sc = $('scroller'), stg = $('stage');
+  s.cx = clamp((sc.scrollLeft + sc.clientWidth / 2 - stg.offsetLeft) / stg.offsetWidth, 0, 1);
+  s.cy = clamp((sc.scrollTop + sc.clientHeight / 2 - stg.offsetTop) / stg.offsetHeight, 0, 1);
+  s.rr = 0;
+  s.rt = clamp((s.h * stg.offsetHeight) / stg.offsetWidth, 0.01, 0.3);
+}
+
 // 「曲げ」の持ち手の横の位置：折れ目から画面で80ピクセルほど右（拡大していても近くに出る）
 function bendHandleX(s, W) {
   return Math.min(apexX(s) + 80 / W, 0.98);
@@ -1108,7 +1304,7 @@ function render() {
   const left = rowLeft(s);
   const way = s.way || 'none';
   $('rowWay').hidden = left === null;
-  $('rowWay').textContent = left ? '←' : '→';
+  $('rowWay').textContent = s.shape === 'ring' ? (left ? '↺' : '↻') : (left ? '←' : '→');
   document.querySelectorAll('[data-way]').forEach((b) => b.classList.toggle('on', b.dataset.way === way));
   $('wayFlipRow').hidden = way === 'none';
   $('wayFlipChk').checked = !!s.wayFlip;
@@ -1129,8 +1325,18 @@ function render() {
 // 帯が画面の真ん中あたりに来るようにスクロール
 function scrollToBand(smooth = true) {
   const scroller = $('scroller');
+  const s = st();
   const stageH = $('stage').offsetHeight;
-  const bandCenter = (st().y + st().h / 2) * stageH;
+  if (s.shape === 'ring') {
+    // 円の帯：円の中心が画面の真ん中に来るように（大きな円なら、上のふちが見えるように）
+    const W = $('stage').offsetWidth;
+    const R = (s.rr + s.rt) * W;
+    const cyPx = s.cy * stageH;
+    const top = R * 2 < scroller.clientHeight ? cyPx - scroller.clientHeight / 2 : cyPx - (s.rr + s.rt / 2) * W - scroller.clientHeight / 3;
+    scroller.scrollTo({ top: Math.max(0, top), left: Math.max(0, s.cx * W - scroller.clientWidth / 2), behavior: smooth ? 'smooth' : 'auto' });
+    return;
+  }
+  const bandCenter = (s.y + s.h / 2) * stageH;
   const top = bandCenter - scroller.clientHeight / 2;
   scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
 }
@@ -1142,7 +1348,9 @@ const r5 = (v) => Math.round(v * 1e5) / 1e5;
 function rememberRow() {
   const s = st();
   if (!s.rowPos) s.rowPos = {};
-  s.rowPos[s.row] = { p: s.page, y: r5(s.y), h: r5(s.h), b: r5(s.bend || 0), a: r5(apexX(s)) };
+  const pos = { p: s.page, y: r5(s.y), h: r5(s.h), b: r5(s.bend || 0), a: r5(apexX(s)) };
+  if (s.shape === 'ring') Object.assign(pos, { sh: 'ring', cx: r5(s.cx), cy: r5(s.cy), rr: r5(s.rr), rt: r5(s.rt) });
+  s.rowPos[s.row] = pos;
 }
 
 function stepRow(n) {
@@ -1155,8 +1363,17 @@ function stepRow(n) {
     s.y = saved.y;
     s.h = saved.h;
     if (saved.b !== undefined) { s.bend = saved.b; s.ax = saved.a; }
+    if (saved.sh === 'ring') Object.assign(s, { shape: 'ring', cx: saved.cx, cy: saved.cy, rr: saved.rr, rt: saved.rt });
+    else delete s.shape;
     afterStep(n);
     if (saved.p !== s.page) showPage(saved.p);
+    return;
+  }
+  if (s.shape === 'ring') {
+    // 円の帯：1段分、外（戻るときは内）へ広げる
+    s.rr = Math.max(0, s.rr + s.rt * n);
+    s.row += n;
+    afterStep(n);
     return;
   }
   const dy = (s.dir === 'up' ? -s.h : s.h) * n;
@@ -1183,6 +1400,7 @@ function afterStep(n) {
 
 function setAdjusting(on) {
   if (on && inking) setInking(false);
+  if (on && cropping) setCropping(false);
   adjusting = on;
   $('viewer').classList.toggle('adjusting', on);
   $('adjustPanel').hidden = !on;
@@ -1203,10 +1421,21 @@ function setupBandDrag() {
     const sx = e.clientX, sy = e.clientY;
     const s = st();
     const y0 = s.y, h0 = s.h, a0 = apexX(s);
+    const ring = s.shape === 'ring';
+    const c0 = { x: s.cx, y: s.cy, rr: s.rr, rt: s.rt };
     el.setPointerCapture(e.pointerId);
 
     const onMove = (ev) => {
       const d = (ev.clientY - sy) / H;
+      if (ring) {
+        // 円の帯：帯を動かすと中心が動く。左の丸＝内側の円、右の丸＝1段の太さ（左右に動かす）
+        const dx = (ev.clientX - sx) / W;
+        if (mode === 'move') { s.cx = clamp(c0.x + dx, 0, 1); s.cy = clamp(c0.y + d, 0, 1); }
+        else if (mode === 'top') s.rr = clamp(c0.rr + dx, 0, 2);
+        else if (mode === 'bottom') s.rt = clamp(c0.rt + dx, 0.003, 2);
+        renderBand();
+        return;
+      }
       if (mode === 'move') {
         s.y = clamp(y0 + d, 0, 1 - h0);
         // 曲げているときは、横にずらすと折れ目の位置も動く
@@ -1256,6 +1485,14 @@ function setupBandDrag() {
     const s = st();
     const fx = (e.clientX - rect.left) / rect.width;
     const fy = (e.clientY - rect.top) / rect.height;
+    if (s.shape === 'ring') {
+      // 円の帯：タップした所を円の中心にする
+      s.cx = clamp(fx, 0, 1);
+      s.cy = clamp(fy, 0, 1);
+      render();
+      scheduleSave();
+      return;
+    }
     // タップした場所が帯の真ん中に来るように（曲げているときは、その横の位置で合わせる）
     s.y = clamp(fy - s.h / 2 - (bandTopAt(s, fx) - s.y), 0, 1 - s.h);
     render();
@@ -1368,6 +1605,7 @@ function setup() {
   Editor.init();
   setupNotes();
   setupInk();
+  setupCrop();
   $('newChartBtn').onclick = () => Editor.newChartDialog();
 
   $('fileInput').addEventListener('change', (e) => {
@@ -1441,7 +1679,28 @@ function setup() {
     bendDown: (s, px) => { s.bend = clamp((s.bend || 0) + px * 2, -3, 3); },
     apexL:    (s) => { s.ax = clamp(apexX(s) - 1 / $('stage').offsetWidth, 0.05, 0.85); },
     apexR:    (s) => { s.ax = clamp(apexX(s) + 1 / $('stage').offsetWidth, 0.05, 0.85); },
+    // 円の帯：中心を左右へ、内側の円を小さく・大きく
+    ringL:    (s) => { s.cx = clamp(s.cx - 1 / $('stage').offsetWidth, 0, 1); },
+    ringR:    (s) => { s.cx = clamp(s.cx + 1 / $('stage').offsetWidth, 0, 1); },
+    ringIn:   (s) => { s.rr = Math.max(0, s.rr - 1 / $('stage').offsetWidth); },
+    ringOut:  (s) => { s.rr += 1 / $('stage').offsetWidth; },
   };
+  // 円の帯のときは、「位置」は中心の上下、「太さ」は1段の太さを変える
+  const ringNudges = {
+    up:    (s, px) => { s.cy = clamp(s.cy - px, 0, 1); },
+    down:  (s, px) => { s.cy = clamp(s.cy + px, 0, 1); },
+    thin:  (s) => { s.rt = Math.max(0.003, s.rt - 1 / $('stage').offsetWidth); },
+    thick: (s) => { s.rt += 1 / $('stage').offsetWidth; },
+  };
+  document.querySelectorAll('[data-shape]').forEach((b) => {
+    b.onclick = () => {
+      const s = st();
+      if (b.dataset.shape === 'ring') { initRing(s); s.shape = 'ring'; } else delete s.shape;
+      render();
+      scrollToBand(false);
+      scheduleSave();
+    };
+  });
   $('straightBtn').onclick = () => { const s = st(); s.bend = 0; s.ax = 0.5; render(); scheduleSave(); };
   // 腕を45°に：両はしが上がる「Vの字」（もう一度押すと下がる「Λの字」）
   $('bend45Btn').onclick = () => {
@@ -1454,10 +1713,11 @@ function setup() {
     scheduleSave();
   };
   document.querySelectorAll('[data-nudge]').forEach((btn) => {
-    const fn = nudges[btn.dataset.nudge];
     const once = () => {
+      const s = st();
+      const fn = (s.shape === 'ring' && ringNudges[btn.dataset.nudge]) || nudges[btn.dataset.nudge];
       const px = 1 / $('stage').offsetHeight; // 画面上の 1 ピクセルぶん
-      fn(st(), px);
+      fn(s, px);
       render();
     };
     holdRepeat(btn, once);
@@ -1470,6 +1730,14 @@ function setup() {
     const n = parseInt(v, 10);
     if (!(n >= 2)) return;
     const s = st();
+    if (s.shape === 'ring') {
+      // 円の帯：ドーナツの太さが n 段分 → 1段の太さにする（内側の円はそのまま）
+      s.rt /= n;
+      render();
+      scheduleSave();
+      toast(`${n}段分から1段の太さを決めました`);
+      return;
+    }
     const nh = s.h / n;
     // 囲んだ範囲のうち、これから編む最初の段に帯を置く
     if (s.dir === 'up') s.y = s.y + s.h - nh;
