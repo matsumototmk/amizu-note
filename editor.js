@@ -94,7 +94,7 @@ const Editor = (() => {
   }
 
   function cellOwner(d, r, c) {
-    for (let k = 0; k < 4; k++) {
+    for (let k = 0; k < 6; k++) { // いちばん幅の広い記号（3目交差）が6マス
       const key = r + ',' + (c - k);
       const cell = d.cells[key];
       if (cell && cell.s) {
@@ -696,6 +696,7 @@ const Editor = (() => {
         s.y = (((doc.rows - row) * C - b.y) * k) / c.height;
         s.dir = 'up';
         s.snap = false;
+        s.rowPos = {}; // 描き直すと段の位置が変わるので、覚えた位置は消す
       }
       await addPattern(meta, [blob]);
       await saveNow();
@@ -708,6 +709,102 @@ const Editor = (() => {
       alert('準備に失敗しました。\n' + (err.message || err));
     }
   }
+
+  /* ---------- 棒針の見本 ----------
+     図は「見たまま」上から下へ書く（いちばん下の行が1段目）。
+     | 表目  - 裏目  o かけ目  / 左上2目一度  \ 右上2目一度  ^ 中上3目一度
+     Q ねじり目  B 玉編み  r/l 右上・左上1目交差  a/b 右上・左上1目交差（下が裏目）
+     R/L 右上・左上2目交差  X/Y 右上・左上3目交差（+ は交差の続きのマス）
+     # 色だけ塗るマス  . 何もなし
+     parts を使うと、いくつかの模様を横に並べられる（段数は自動でそろえる） */
+  const SAMPLE_CHARS = {
+    '|': 'k', '-': 'p', 'o': 'yo', '/': 'k2tog', '\\': 'ssk', '^': 's2kp', 'Q': 'ktbl', 'V': 'sl', 'B': 'mb',
+    'r': 'c1r', 'l': 'c1l', 'a': 'c1rp', 'b': 'c1lp', 'R': 'c2r', 'L': 'c2l', 'X': 'c3r', 'Y': 'c3l',
+  };
+  const ARAN = {
+    moss: ['|-', '-|'],
+    ropeR: ['-||||-', '-R+++-', '-||||-', '-||||-'], // 交差は3段目（表側の段）
+    ropeL: ['-||||-', '-L+++-', '-||||-', '-||||-'],
+    diamond: [
+      '----||----', '----r+----', '----||----', '---b+a+---', '---|--|---', '--b+--a+--', '--|----|--', '-b+-B--a+-',
+      '-|------|-', '-a+----b+-', '--|----|--', '--a+--b+--', '---|--|---', '---a+b+---', '----||----', '----||----',
+    ],
+  };
+  const SAMPLES = [
+    { id: 'stst', name: 'メリヤス編み', desc: '表から見て全部が表目。いちばん基本の編み地です。',
+      motif: ['|'], tx: 12, ty: 14 },
+    { id: 'garter', name: 'ガーター編み', desc: '表目の段と裏目の段をくり返します（毎段表編みで編めます）。',
+      motif: ['-', '|'], tx: 12, ty: 7 },
+    { id: 'rib1', name: '1目ゴム編み', desc: '表目と裏目を1目ずつ交互に。そで口やすそに使います。',
+      motif: ['|-'], tx: 6, ty: 12 },
+    { id: 'rib2', name: '2目ゴム編み', desc: '表目2目・裏目2目をくり返します。',
+      motif: ['||--'], tx: 3, ty: 12 },
+    { id: 'seed', name: 'かのこ編み', desc: '表目と裏目を1目ずつずらして、ぽこぽこした編み地に。',
+      motif: ['|-', '-|'], tx: 6, ty: 6 },
+    { id: 'cable', name: 'なわ編み', desc: '6段ごとに2目交差。右は右上、左は左上で向かい合わせのなわになります。',
+      motif: ['-||||--||||-', '-||||--||||-', '-||||--||||-', '-R+++--L+++-', '-||||--||||-', '-||||--||||-'], tx: 1, ty: 3 },
+    { id: 'lace', name: 'ダイヤの透かし模様', desc: 'かけ目と2目一度でダイヤ形の穴をあけます。偶数段は全部表目（裏から見て裏目）。',
+      motif: ['||||||||||', '|||\\o|o/||', '||||||||||', '||o/|||\\o|', '||||||||||', '|||o/|\\o||', '||||||||||', '||||o^o|||'], tx: 2, ty: 2 },
+    { id: 'heart', name: '編み込み（ハート）', desc: '色のついたマスを別の色の糸で編みます。',
+      motif: ['.............', '...##...##...', '..####.####..', '..#########..', '..#########..', '...#######...', '....#####....', '.....###.....', '......#......', '.............', '.............'],
+      tx: 1, ty: 1, color: '#e57373' },
+
+    /* ---------- アラン模様 ---------- */
+    { id: 'aran-panel', group: 'aran', name: 'アランの組み合わせ', desc: 'かのこ・なわ編み・ダイヤ（玉編み入り）を並べた、アランセーターの前身ごろのような模様です。',
+      parts: [{ motif: ARAN.moss }, { motif: ARAN.ropeR }, { motif: ARAN.diamond }, { motif: ARAN.ropeL }, { motif: ARAN.moss }], ty: 2 },
+    { id: 'aran-diamond', group: 'aran', name: 'ダイヤと玉編み', desc: '表目2目が裏目の上を斜めに移動してダイヤ形を作ります。中に玉編み（ボッブル）。',
+      motif: ARAN.diamond, tx: 1, ty: 2 },
+    { id: 'aran-honeycomb', group: 'aran', name: 'ハニカム（蜂の巣）', desc: '2目交差を右上・左上と組み合わせて、蜂の巣のような六角形を作ります。',
+      parts: [{ motif: ['-'] }, { motif: ['||||||||', '||||||||', '||||||||', 'L+++R+++', '||||||||', '||||||||', '||||||||', 'R+++L+++'], tx: 2 }, { motif: ['-'] }], ty: 3 },
+    { id: 'aran-horseshoe', group: 'aran', name: 'ダブルケーブル', desc: '右上と左上の2目交差を並べた、馬のてい鉄のような形のなわ編みです。',
+      motif: ['--||||||||--', '--||||||||--', '--||||||||--', '--R+++L+++--', '--||||||||--', '--||||||||--'], tx: 1, ty: 3 },
+    { id: 'aran-thick', group: 'aran', name: '太いなわ編み', desc: '3目交差の太いなわ。8段ごとに交差します。',
+      motif: ['-||||||-', '-||||||-', '-||||||-', '-||||||-', '-||||||-', '-X+++++-', '-||||||-', '-||||||-'], tx: 2, ty: 3 },
+    { id: 'aran-rib', group: 'aran', name: 'ねじりゴム編み', desc: 'ねじり目と裏目の1目ゴム。アランセーターのすそやそで口によく使います。',
+      motif: ['-Q'], tx: 6, ty: 10 },
+  ];
+
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  function buildSample(sm) {
+    const parts = sm.parts || [{ motif: sm.motif, tx: sm.tx }];
+    const base = parts.reduce((m, p) => (m * p.motif.length) / gcd(m, p.motif.length), 1);
+    const rows = base * (sm.ty || 1);
+    const cells = {};
+    let x0 = 0;
+    for (const part of parts) {
+      const mh = part.motif.length, mw = part.motif[0].length;
+      const w = mw * (part.tx || 1);
+      for (let r = 0; r < rows; r++) {
+        const line = part.motif[r % mh];
+        for (let c = 0; c < w; c++) {
+          const ch = line[c % mw];
+          const key = r + ',' + (x0 + c);
+          if (ch === '#') cells[key] = { col: sm.color };
+          else if (SAMPLE_CHARS[ch]) cells[key] = { s: SAMPLE_CHARS[ch] };
+        }
+      }
+      x0 += w;
+    }
+    return { cols: x0, rows, cells };
+  }
+
+  // 見本の小さな絵
+  const samplePreviewCache = {};
+  function samplePreview(sm) {
+    if (samplePreviewCache[sm.id]) return samplePreviewCache[sm.id];
+    const d = Object.assign({ mode: 'grid', strokes: [], stamps: [] }, buildSample(sm));
+    const b = bounds(d);
+    const k = 150 / Math.max(b.w, b.h);
+    const c = document.createElement('canvas');
+    c.width = Math.round(b.w * k);
+    c.height = Math.round(b.h * k);
+    const g = c.getContext('2d');
+    g.setTransform(k, 0, 0, k, -b.x * k, -b.y * k);
+    drawDoc(g, d, true);
+    return (samplePreviewCache[sm.id] = c.toDataURL());
+  }
+
+  const sampleBtn = (sm) => `<button class="sample-btn" data-sample="${sm.id}"><img src="${samplePreview(sm)}" alt=""><small>${sm.name}</small></button>`;
 
   /* ---------- ダイアログ ---------- */
   function showModal(html, onReady) {
@@ -728,31 +825,63 @@ const Editor = (() => {
           <label><input type="radio" name="ncType" value="crochet-free"> かぎ針（円・自由）</label>
         </div>
       </div>
+      <div id="ncSamples" class="field"><span>見本から始める</span>
+        <div class="sample-list">
+          <button class="sample-btn on" data-sample=""><span class="sample-blank">白紙</span><small>白紙から</small></button>
+          ${SAMPLES.filter((sm) => !sm.group).map(sampleBtn).join('')}
+        </div>
+        <span class="sample-group">アラン模様</span>
+        <div class="sample-list">
+          ${SAMPLES.filter((sm) => sm.group === 'aran').map(sampleBtn).join('')}
+        </div>
+        <p id="ncDesc" class="opt-note"></p>
+      </div>
       <div id="ncSize" class="size-row">
         <label class="field"><span>目数（横）</span><input id="ncCols" type="number" min="1" max="200" value="20" inputmode="numeric"></label>
         <label class="field"><span>段数（たて）</span><input id="ncRows" type="number" min="1" max="300" value="30" inputmode="numeric"></label>
       </div>
       <div class="modal-actions"><button id="ncCancel" class="sub">やめる</button><button id="ncOk" class="primary">作る</button></div>
     `, (box) => {
-      box.querySelectorAll('input[name=ncType]').forEach((r) => {
-        r.onchange = () => { el('ncSize').hidden = r.value === 'crochet-free' && r.checked; };
+      let sample = null;
+      const update = () => {
+        const type = box.querySelector('input[name=ncType]:checked').value;
+        el('ncSamples').hidden = type !== 'knit';
+        if (type !== 'knit') sample = null;
+        box.querySelectorAll('[data-sample]').forEach((b) => b.classList.toggle('on', b.dataset.sample === (sample ? sample.id : '')));
+        el('ncSize').hidden = type === 'crochet-free' || !!sample;
+        el('ncDesc').textContent = sample ? sample.desc + '（作ったあと自由に描き足せます）' : '';
+      };
+      box.querySelectorAll('input[name=ncType]').forEach((r) => { r.onchange = update; });
+      box.querySelectorAll('[data-sample]').forEach((b) => {
+        b.onclick = () => {
+          const prev = sample;
+          sample = SAMPLES.find((sm) => sm.id === b.dataset.sample) || null;
+          // 名前を変えていなければ、見本の名前にする
+          const nm = el('ncName');
+          if (nm.value === '新しい編み図' || (prev && nm.value === prev.name)) nm.value = sample ? sample.name : '新しい編み図';
+          update();
+        };
       });
+      update();
       el('ncCancel').onclick = hideModal;
       el('ncOk').onclick = async () => {
         const type = box.querySelector('input[name=ncType]:checked').value;
-        const cols = Math.min(200, Math.max(1, parseInt(el('ncCols').value, 10) || 20));
-        const rows = Math.min(300, Math.max(1, parseInt(el('ncRows').value, 10) || 30));
+        let cols = Math.min(200, Math.max(1, parseInt(el('ncCols').value, 10) || 20));
+        let rows = Math.min(300, Math.max(1, parseInt(el('ncRows').value, 10) || 30));
+        let cells = {};
+        if (type === 'knit' && sample) ({ cols, rows, cells } = buildSample(sample));
         const d = {
           id: newId(),
           name: el('ncName').value.trim() || '新しい編み図',
           created: Date.now(),
           kind: type,
           mode: type === 'crochet-free' ? 'free' : 'grid',
-          cols, rows, cells: {}, strokes: [], stamps: [], guides: true,
+          cols, rows, cells, strokes: [], stamps: [], guides: true,
         };
         await putChart(d);
         hideModal();
-        open(d.id);
+        await open(d.id);
+        if (sample) toast(sample.desc);
       };
     });
   }

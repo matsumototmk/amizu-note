@@ -6,8 +6,7 @@
   --line: #e8ddd6;
   --accent: #b5576b;
   --accent-soft: #f6e3e7;
-  --band: rgba(255, 214, 64, 0.38);
-  --band-edge: #e0a800;
+  --band: rgba(255, 210, 50, 0.45);
   --shade: rgba(40, 30, 30, 0.45);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
@@ -83,6 +82,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #scroller { touch-action: pan-x pan-y; } /* ブラウザ自体の拡大を止めて、アプリの拡大を使う */
 #pageCanvas { display: block; width: 100%; height: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 
+/* 書き込み */
+#inkCanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+.inking #inkCanvas { pointer-events: auto; touch-action: none; cursor: crosshair; }
+.inking.pen-only #inkCanvas { touch-action: pan-x pan-y; } /* ペンだけで描くときは、指でスクロールできる */
+.inking #band, .inking .shade { opacity: .35; }
+#inkPanel .swatch { width: 30px; height: 30px; }
+#inkBtn { padding: 0 10px; }
+#inkBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* 傾き調整用のガイド線 */
 #guides {
   position: absolute; inset: 0; pointer-events: none; z-index: 3;
@@ -95,11 +103,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #band {
   position: absolute; left: 0; right: 0;
   background: var(--band);
-  border-top: 2px solid var(--band-edge);
-  border-bottom: 2px solid var(--band-edge);
+  mix-blend-mode: multiply; /* 記号の黒い線はそのまま、紙の白い所だけ黄色くなる */
   pointer-events: none;
   transition: top .2s ease;
 }
+/* 編む向きの矢印（帯の中にうすく並べる） */
+#band.way-left {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M24 4 L16 10 L24 16' fill='none' stroke='%23b86e00' stroke-opacity='.4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x; background-position: center; background-size: auto 55%;
+}
+#band.way-right {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M16 4 L24 10 L16 16' fill='none' stroke='%23b86e00' stroke-opacity='.4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x; background-position: center; background-size: auto 55%;
+}
+#rowWay { display: block; font-size: 22px; line-height: 1; color: #b86e00; }
 .shade { position: absolute; left: 0; right: 0; background: var(--shade); pointer-events: none; transition: top .2s ease, height .2s ease; }
 #shadeTop { top: 0; }
 #shadeBottom { bottom: 0; }
@@ -180,6 +197,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .section-title { font-size: 15px; color: var(--muted); margin: 24px 0 10px; font-weight: 600; }
 
+/* ---------- グループ ---------- */
+.section-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.small-link { font-size: 15px; }
+#groupList:not(:empty) { margin-bottom: 12px; }
+.group-head {
+  display: flex; align-items: center; gap: 8px; margin: -8px 0 14px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.group-name { flex: 1; min-width: 0; font-size: 18px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupMenu { font-size: 22px; padding: 4px 10px; }
+.card.group-card { background: var(--accent-soft); border-color: #ecc9d1; }
+.folder { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+.folder img { position: absolute; width: 54px; height: 54px; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.folder img:nth-child(1) { left: 0; top: 0; transform: rotate(-6deg); }
+.folder img:nth-child(2) { left: 8px; top: 6px; transform: rotate(4deg); }
+.folder .folder-empty { width: 64px; height: 64px; border-radius: 8px; border: 2px dashed #ecc9d1; display: flex; align-items: center; justify-content: center; font-size: 26px; }
+.card-more { background: none; border: none; color: var(--muted); font-size: 22px; padding: 6px 12px; }
+.menu-list { display: grid; gap: 8px; }
+.menu-list button { height: 46px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 16px; text-align: left; padding: 0 14px; }
+.menu-list button.on { border: 2px solid var(--accent); background: var(--accent-soft); }
+
 /* ---------- ステップ2：カウンター・メモ ---------- */
 .counter-chip {
   height: 36px; border-radius: 18px; border: 1px solid var(--accent);
@@ -253,6 +291,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .sym-btn span { font-size: 10px; line-height: 1.2; color: var(--text); text-align: center; }
 .sym-btn.on { border: 2px solid var(--accent); background: var(--accent-soft); }
 
+/* ---------- 手書きメモ ---------- */
+.notepad { position: fixed; inset: 0; z-index: 45; background: #e9e4e0; display: flex; flex-direction: column; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.np-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.np-page { position: relative; box-shadow: 0 2px 8px rgba(0,0,0,.15); border-radius: 4px; overflow: hidden; flex-shrink: 0; }
+.np-page canvas { display: block; touch-action: pan-y; }
+.finger-draw .np-page canvas { touch-action: none; }
+.np-num { position: absolute; right: 10px; bottom: 6px; font-size: 12px; color: #b9ada6; pointer-events: none; }
+.np-add { flex: 0 0 auto !important; padding: 0 20px; height: 44px; background: var(--surface); margin-bottom: 20px; }
+.np-tools { background: var(--surface); border-top: 1px solid var(--line); padding: 8px 12px calc(8px + var(--safe-b)); display: grid; gap: 8px; }
+.note-btn { background: var(--surface); border: 1px solid var(--accent); color: var(--accent); border-radius: 18px; padding: 6px 12px; font-size: 14px; white-space: nowrap; }
+.note-big { height: 48px; border-radius: 12px; border: 2px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 16px; font-weight: 600; }
+
 /* ---------- ダイアログ ---------- */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 55; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .modal-box { background: var(--surface); border-radius: 16px; padding: 18px; width: 100%; max-width: 420px; display: grid; gap: 14px; max-height: 90vh; overflow: auto; }
@@ -260,6 +310,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .type-list { display: grid; gap: 8px; color: var(--text); font-size: 16px; }
 .type-list label { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .type-list input { width: 18px; height: 18px; accent-color: var(--accent); }
+.sample-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.sample-btn {
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 6px 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text);
+}
+.sample-btn img, .sample-blank { width: 64px; height: 64px; object-fit: contain; }
+.sample-blank { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; color: var(--muted); }
+.sample-btn small { font-size: 11px; line-height: 1.3; text-align: center; }
+.sample-group { margin-top: 6px; }
+.sample-btn.on { border: 2px solid var(--accent); background: var(--accent-soft); }
 .size-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .modal-actions .sub { flex: 0 1 auto; padding: 0 14px; }

@@ -34,8 +34,8 @@ const SYMBOLS = (() => {
     }
   }
 
-  // 交差編み（over: 上になる側）
-  function cable(g, span, over, bg) {
+  // 交差編み（over: 上になる側、purlUnder: 下になる目が裏目）
+  function cable(g, span, over, bg, purlUnder) {
     const n = span / 2, half = span / 2;
     const right = [], left = [];
     for (let i = 0; i < n; i++) {
@@ -45,6 +45,13 @@ const SYMBOLS = (() => {
     const under = over === 'right' ? left : right;
     const top = over === 'right' ? right : left;
     under.forEach((l) => line(g, ...l));
+    if (purlUnder) {
+      // 下になる目が裏目のしるし（根元に横棒）
+      under.forEach(([x1, y1, x2, y2]) => {
+        const mx = x1 + (x2 - x1) * 0.2, my = y1 + (y2 - y1) * 0.2;
+        line(g, mx - 0.16, my, mx + 0.16, my);
+      });
+    }
     const lw = g.lineWidth;
     g.strokeStyle = bg; g.lineWidth = lw * 3.2;
     top.forEach((l) => line(g, ...l));
@@ -82,6 +89,15 @@ const SYMBOLS = (() => {
     c1l:   { set: 'knit', name: '左上1目交差', span: 2, draw: (g, s, bg) => cable(g, s, 'left', bg) },
     c2r:   { set: 'knit', name: '右上2目交差', span: 4, draw: (g, s, bg) => cable(g, s, 'right', bg) },
     c2l:   { set: 'knit', name: '左上2目交差', span: 4, draw: (g, s, bg) => cable(g, s, 'left', bg) },
+    c1rp:  { set: 'knit', name: '右上1目交差（下が裏目）', span: 2, draw: (g, s, bg) => cable(g, s, 'right', bg, true) },
+    c1lp:  { set: 'knit', name: '左上1目交差（下が裏目）', span: 2, draw: (g, s, bg) => cable(g, s, 'left', bg, true) },
+    c3r:   { set: 'knit', name: '右上3目交差', span: 6, draw: (g, s, bg) => cable(g, s, 'right', bg) },
+    c3l:   { set: 'knit', name: '左上3目交差', span: 6, draw: (g, s, bg) => cable(g, s, 'left', bg) },
+    mb:    { set: 'knit', name: '玉編み（ボッブル）', draw: (g) => {
+      ellipse(g, 0, 0, 0.3, 0.38);
+      g.font = '0.4px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('玉', 0, 0.02);
+    } },
 
     /* ---------- かぎ針 ---------- */
     ch:     { set: 'crochet', name: 'くさり編み', draw: (g) => ellipse(g, 0, 0, 0.3, 0.15) },

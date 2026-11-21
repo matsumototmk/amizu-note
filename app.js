@@ -23,15 +23,23 @@ let dbPromise;
 function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open('amizu-note', 2);
+      const req = indexedDB.open('amizu-note', 3);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('pages')) db.createObjectStore('pages', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('charts')) db.createObjectStore('charts', { keyPath: 'id' }); // 描いた編み図
+        if (!db.objectStoreNames.contains('groups')) db.createObjectStore('groups', { keyPath: 'id' }); // 作品ごとのグループ
+        if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });   // 手書きメモ
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        // 新しい版のアプリが開かれたら、古い画面は接続を閉じて道をあける
+        db.onversionchange = () => { db.close(); dbPromise = null; toast('アプリが新しくなりました。画面を読み込み直してください'); };
+        resolve(db);
+      };
       req.onerror = () => reject(req.error);
+      req.onblocked = () => toast('ほかのタブや画面で「あみ図ノート」が開いています。閉じてから読み込み直してください');
     });
   }
   return dbPromise;
@@ -53,14 +61,27 @@ const addPattern = (m, blobs) => dbRun(['meta', 'pages'], 'readwrite', (t) => {
   t.objectStore('meta').put(m);
   t.objectStore('pages').put({ id: m.id, blobs });
 });
-const deletePattern = (id) => dbRun(['meta', 'pages'], 'readwrite', (t) => {
+const deletePattern = (id) => dbRun(['meta', 'pages', 'notes'], 'readwrite', (t) => {
   t.objectStore('meta').delete(id);
   t.objectStore('pages').delete(id);
+  t.objectStore('notes').delete('p:' + id);
 });
+// 手書きメモ（id は 'g:グループid' か 'p:編み図id'）
+const getNote = (id) => dbRun('notes', 'readonly', (t) => t.objectStore('notes').get(id));
+const putNote = (n) => dbRun('notes', 'readwrite', (t) => { t.objectStore('notes').put(n); });
 const getAllCharts = () => dbRun('charts', 'readonly', (t) => t.objectStore('charts').getAll());
 const getChart = (id) => dbRun('charts', 'readonly', (t) => t.objectStore('charts').get(id));
 const putChart = (d) => dbRun('charts', 'readwrite', (t) => { t.objectStore('charts').put(d); });
 const deleteChart = (id) => dbRun('charts', 'readwrite', (t) => { t.objectStore('charts').delete(id); });
+
+const getAllGroups = () => dbRun('groups', 'readonly', (t) => t.objectStore('groups').getAll());
+const putGroup = (g) => dbRun('groups', 'readwrite', (t) => { t.objectStore('groups').put(g); });
+// グループを消す。中の編み図は消さずに、グループの外へ出す
+const deleteGroup = (id, metas) => dbRun(['groups', 'meta', 'notes'], 'readwrite', (t) => {
+  t.objectStore('groups').delete(id);
+  t.objectStore('notes').delete('g:' + id);
+  metas.filter((m) => m.group === id).forEach((m) => { delete m.group; t.objectStore('meta').put(m); });
+});
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -149,81 +170,288 @@ async function shrinkPhoto(file) {
   }
 }
 
-async function importFile(file) {
+// 1つのファイルを取り込む（created をずらして渡すと、選んだ順に並ぶ）
+async function importOne(file, group, created) {
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-  busy('読み込み中…');
+  const blobs = isPdf ? await pdfToImages(file) : [await shrinkPhoto(file)];
+  if (!blobs.length) throw new Error('ページが見つかりませんでした。');
+  const meta = {
+    id: newId(),
+    name: file.name.replace(/\.[^.]+$/, '') || '編み図',
+    created: created || Date.now(),
+    pageCount: blobs.length,
+    state: { page: 0, row: 1, y: 0.85, h: 0.04, dir: 'up', zoom: 1, dim: true },
+  };
+  if (group) meta.group = group;
+  await addPattern(meta, blobs);
+  return meta;
+}
+
+async function importFiles(files) {
+  if (!files.length) return;
+  let group = curGroup;
   try {
-    const blobs = isPdf ? await pdfToImages(file) : [await shrinkPhoto(file)];
-    if (!blobs.length) throw new Error('ページが見つかりませんでした。');
-    const meta = {
-      id: newId(),
-      name: file.name.replace(/\.[^.]+$/, '') || '編み図',
-      created: Date.now(),
-      pageCount: blobs.length,
-      state: { page: 0, row: 1, y: 0.85, h: 0.04, dir: 'up', zoom: 1, dim: true },
-    };
-    await addPattern(meta, blobs);
+    // 何枚かまとめて選んだときは、グループにまとめる
+    if (files.length > 1 && !group) {
+      const name = prompt(`${files.length}枚の編み図を1つのグループにまとめます。\nグループの名前（作品名）を入れてください。`, '新しい作品');
+      if (name === null) return;
+      const g = { id: newId(), name: name.trim() || '新しい作品', created: Date.now() };
+      await putGroup(g);
+      group = g.id;
+    }
+    const t0 = Date.now();
+    let last = null;
+    for (let i = 0; i < files.length; i++) {
+      busy(files.length > 1 ? `読み込み中… ${i + 1} / ${files.length}` : '読み込み中…');
+      last = await importOne(files[i], group, t0 + i);
+    }
     busy(null);
-    await openViewer(meta.id, true);
+    if (files.length === 1) {
+      await openViewer(last.id, true);
+    } else {
+      curGroup = group;
+      await renderHome();
+      toast(`${files.length}枚を取り込みました。1枚ずつ開いて帯を合わせてください`);
+    }
   } catch (err) {
     busy(null);
     console.error(err);
     alert('取り込みに失敗しました。\n' + (err.message || err));
+    renderHome();
   }
 }
 
+/* ---------- 小さな画面（メニューなど） ---------- */
+function sheet(html, ready) {
+  $('modalBox').innerHTML = html;
+  $('modal').hidden = false;
+  if (ready) ready($('modalBox'));
+}
+function closeSheet() { $('modal').hidden = true; $('modalBox').innerHTML = ''; }
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 /* ---------- 一覧画面 ---------- */
 let listUrls = [];
+let curGroup = null;   // 開いているグループ（null = すべて）
+
+function thumbOf(id, img) {
+  getPages(id).then((p) => {
+    if (p && p.blobs[0]) {
+      const url = URL.createObjectURL(p.blobs[0]);
+      listUrls.push(url);
+      img.src = url;
+    }
+  });
+}
+
+function patternCard(m) {
+  const li = document.createElement('li');
+  li.className = 'card';
+  const open = document.createElement('button');
+  open.className = 'card-open';
+  const img = document.createElement('img');
+  img.alt = '';
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  const name = document.createElement('div');
+  name.className = 'card-name';
+  name.textContent = m.name;
+  const metaLine = document.createElement('div');
+  metaLine.className = 'card-meta';
+  metaLine.textContent = `${m.state.row} 段目` + (m.pageCount > 1 ? ` ・ ${m.pageCount} ページ` : '');
+  info.append(name, metaLine);
+  open.append(img, info);
+  open.onclick = () => openViewer(m.id);
+  const more = document.createElement('button');
+  more.className = 'card-more';
+  more.textContent = '⋯';
+  more.setAttribute('aria-label', 'メニュー');
+  more.onclick = () => patternMenu(m);
+  li.append(open, more);
+  thumbOf(m.id, img);
+  return li;
+}
+
+function groupCard(g, items) {
+  const li = document.createElement('li');
+  li.className = 'card group-card';
+  const open = document.createElement('button');
+  open.className = 'card-open';
+  const folder = document.createElement('div');
+  folder.className = 'folder';
+  if (items.length) {
+    items.slice(0, 2).forEach((m) => { const img = document.createElement('img'); img.alt = ''; folder.append(img); thumbOf(m.id, img); });
+  } else {
+    folder.innerHTML = '<div class="folder-empty">📁</div>';
+  }
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  const name = document.createElement('div');
+  name.className = 'card-name';
+  name.textContent = '📁 ' + g.name;
+  const metaLine = document.createElement('div');
+  metaLine.className = 'card-meta';
+  metaLine.textContent = items.length ? `編み図 ${items.length} 枚` : 'まだ空です';
+  info.append(name, metaLine);
+  open.append(folder, info);
+  open.onclick = () => { curGroup = g.id; renderHome(); window.scrollTo(0, 0); };
+  li.append(open);
+  return li;
+}
+
+// 編み図の「⋯」メニュー
+async function patternMenu(m) {
+  const groups = await getAllGroups();
+  const g = groups.find((x) => x.id === m.group);
+  sheet(`
+    <h2>${esc(m.name)}</h2>
+    <div class="menu-list">
+      <button data-act="rename">名前を変える</button>
+      <button data-act="move">${g ? 'ほかのグループへ移す' : 'グループに入れる'}</button>
+      ${g ? `<button data-act="out">グループから出す</button>` : ''}
+      <button data-act="del" class="danger">削除</button>
+    </div>
+    <div class="modal-actions"><button class="sub" data-act="close">閉じる</button></div>
+  `, (box) => {
+    box.onclick = async (e) => {
+      const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
+      if (!act) return;
+      if (act === 'close') closeSheet();
+      if (act === 'rename') {
+        const name = prompt('名前を変更', m.name);
+        if (name && name.trim()) { m.name = name.trim(); await putMeta(m); }
+        closeSheet(); renderHome();
+      }
+      if (act === 'move') chooseGroup(m, groups);
+      if (act === 'out') { delete m.group; await putMeta(m); closeSheet(); renderHome(); toast('グループから出しました'); }
+      if (act === 'del') {
+        if (!confirm(`「${m.name}」を削除しますか？\n（帯の位置や書き込みも消えます）`)) return;
+        await deletePattern(m.id);
+        closeSheet(); renderHome();
+      }
+    };
+  });
+}
+
+// どのグループに入れるか選ぶ
+function chooseGroup(m, groups) {
+  groups.sort((a, b) => b.created - a.created);
+  sheet(`
+    <h2>どのグループに入れますか？</h2>
+    <div class="menu-list">
+      ${groups.map((g) => `<button data-gid="${g.id}" class="${g.id === m.group ? 'on' : ''}">📁 ${esc(g.name)}</button>`).join('')}
+      <button data-gid="new">＋ 新しいグループを作って入れる</button>
+    </div>
+    <div class="modal-actions"><button class="sub" data-gid="cancel">やめる</button></div>
+  `, (box) => {
+    box.onclick = async (e) => {
+      const b = e.target.closest('[data-gid]');
+      if (!b) return;
+      let gid = b.dataset.gid;
+      if (gid === 'cancel') { closeSheet(); return; }
+      if (gid === 'new') {
+        const name = prompt('グループの名前（作品名）', '新しい作品');
+        if (!name || !name.trim()) return;
+        const g = { id: newId(), name: name.trim(), created: Date.now() };
+        await putGroup(g);
+        gid = g.id;
+      }
+      m.group = gid;
+      await putMeta(m);
+      closeSheet();
+      renderHome();
+      const g = (await getAllGroups()).find((x) => x.id === gid);
+      toast(`「${g ? g.name : ''}」に入れました`);
+    };
+  });
+}
+
+async function newGroup() {
+  const name = prompt('グループの名前（作品名）\n例：アランのセーター', '新しい作品');
+  if (!name || !name.trim()) return;
+  const g = { id: newId(), name: name.trim(), created: Date.now() };
+  await putGroup(g);
+  curGroup = g.id;
+  renderHome();
+  toast('グループを作りました。上のボタンから編み図を取り込めます');
+}
+
+async function groupMenu() {
+  const g = (await getAllGroups()).find((x) => x.id === curGroup);
+  if (!g) return;
+  sheet(`
+    <h2>📁 ${esc(g.name)}</h2>
+    <div class="menu-list">
+      <button data-act="rename">グループの名前を変える</button>
+      <button data-act="del" class="danger">グループを削除（中の編み図は残ります）</button>
+    </div>
+    <div class="modal-actions"><button class="sub" data-act="close">閉じる</button></div>
+  `, (box) => {
+    box.onclick = async (e) => {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      const act = b.dataset.act;
+      if (act === 'close') closeSheet();
+      if (act === 'rename') {
+        const name = prompt('グループの名前', g.name);
+        if (name && name.trim()) { g.name = name.trim(); await putGroup(g); }
+        closeSheet(); renderHome();
+      }
+      if (act === 'del') {
+        if (!confirm(`グループ「${g.name}」を削除しますか？\n中の編み図は消えずに、グループの外に出ます。\n（グループの手書きメモは消えます）`)) return;
+        await deleteGroup(g.id, await getAllMeta());
+        curGroup = null;
+        closeSheet(); renderHome();
+      }
+    };
+  });
+}
+
 async function renderHome() {
   listUrls.forEach(URL.revokeObjectURL);
   listUrls = [];
   const list = $('patternList');
+  const glist = $('groupList');
   list.innerHTML = '';
-  const metas = (await getAllMeta()).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
-  $('emptyMsg').hidden = metas.length > 0;
+  glist.innerHTML = '';
+  const allMetas = await getAllMeta();
+  const groups = await getAllGroups();
+  const group = groups.find((g) => g.id === curGroup);
+  if (!group) curGroup = null;
+  const inGroup = !!group;
 
-  for (const m of metas) {
-    const li = document.createElement('li');
-    li.className = 'card';
+  // グループの中を見ているときと、すべてを見ているときで表示を変える
+  $('groupHead').hidden = !inGroup;
+  if (inGroup) $('groupName').textContent = '📁 ' + group.name;
+  $('importLabel').textContent = inGroup ? '＋ このグループに編み図を取り込む' : '＋ 編み図を取り込む';
+  $('importHint').textContent = inGroup
+    ? '写真・画像・PDF を選べます（何枚かまとめて選べます）'
+    : '写真・画像・PDF を選べます（何枚かまとめて選ぶと、1つのグループになります）';
+  $('newChartBtn').hidden = inGroup;
+  $('newGroupBtn').hidden = inGroup;
+  $('listTitle').textContent = inGroup ? '編み図（取り込んだ順）' : '編む';
 
-    const open = document.createElement('button');
-    open.className = 'card-open';
-    const img = document.createElement('img');
-    img.alt = '';
-    const info = document.createElement('div');
-    info.className = 'card-info';
-    const name = document.createElement('div');
-    name.className = 'card-name';
-    name.textContent = m.name;
-    const metaLine = document.createElement('div');
-    metaLine.className = 'card-meta';
-    metaLine.textContent = `${m.state.row} 段目` + (m.pageCount > 1 ? ` ・ ${m.pageCount} ページ` : '');
-    info.append(name, metaLine);
-    open.append(img, info);
-    open.onclick = () => openViewer(m.id);
-
-    const del = document.createElement('button');
-    del.className = 'card-del';
-    del.textContent = '削除';
-    del.onclick = async () => {
-      if (!confirm(`「${m.name}」を削除しますか？`)) return;
-      await deletePattern(m.id);
-      renderHome();
-    };
-
-    li.append(open, del);
-    list.append(li);
-
-    getPages(m.id).then((p) => {
-      if (p && p.blobs[0]) {
-        const url = URL.createObjectURL(p.blobs[0]);
-        listUrls.push(url);
-        img.src = url;
-      }
+  let metas;
+  if (inGroup) {
+    metas = allMetas.filter((m) => m.group === curGroup).sort((a, b) => a.created - b.created);
+  } else {
+    const time = (x) => x.updated || x.created;
+    const known = new Set(groups.map((g) => g.id));
+    // グループは、中の編み図をいちばん最近さわった順
+    const lastUsed = (g) => Math.max(g.created, ...allMetas.filter((m) => m.group === g.id).map(time));
+    groups.sort((a, b) => lastUsed(b) - lastUsed(a)).forEach((g) => {
+      glist.append(groupCard(g, allMetas.filter((m) => m.group === g.id).sort((a, b) => a.created - b.created)));
     });
+    metas = allMetas.filter((m) => !m.group || !known.has(m.group)).sort((a, b) => time(b) - time(a));
   }
+  $('emptyMsg').hidden = metas.length > 0 || (!inGroup && groups.length > 0);
+  $('emptyMsg').innerHTML = inGroup
+    ? 'このグループはまだ空です。<br>上のボタンから取り込むか、一覧の編み図の「⋯」から入れられます。'
+    : 'まだ編み図がありません。<br>上のボタンから取り込んでみましょう。';
+  metas.forEach((m) => list.append(patternCard(m)));
 
-  // 描いた編み図
+  // 描いた編み図（グループの中を見ているときは出さない）
+  if (inGroup) { $('chartSection').hidden = true; return; }
   const charts = (await getAllCharts()).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
   const clist = $('chartList');
   clist.innerHTML = '';
@@ -284,6 +512,8 @@ async function openViewer(id, isNew = false) {
   if (!cur.notes) cur.notes = {};
   $('editChartBtn').hidden = !cur.chartId;
   $('notesSheet').hidden = true;
+  inkUndo = [];
+  setInking(false);
   renderCounters();
 
   $('home').hidden = true;
@@ -297,13 +527,16 @@ async function openViewer(id, isNew = false) {
 
 async function closeViewer() {
   setAdjusting(false);
+  setInking(false);
   await saveNow();
   releaseWakeLock();
   cur = null;
   if (pageUrl) URL.revokeObjectURL(pageUrl);
   pageUrl = null;
   srcImg = null;
+  pageXf = null;
   $('pageCanvas').width = $('pageCanvas').height = 0;
+  $('inkCanvas').width = $('inkCanvas').height = 0;
   $('viewer').hidden = true;
   $('home').hidden = false;
   renderHome();
@@ -340,6 +573,7 @@ function drawPage() {
   const c = $('pageCanvas');
   c.width = Math.round(bw * k);
   c.height = Math.round(bh * k);
+  pageXf = { rad, k, w, h, cw: c.width, ch: c.height };
   const g = c.getContext('2d', { willReadFrequently: true });
   g.fillStyle = '#fff';
   g.fillRect(0, 0, c.width, c.height);
@@ -348,6 +582,278 @@ function drawPage() {
   g.rotate(rad);
   g.scale(k, k);
   g.drawImage(srcImg, -w / 2, -h / 2);
+  drawInk();
+}
+
+/* ---------- 編み図への書き込み ----------
+   書いた線は「元の画像の中の位置（0〜1）」で覚えておくので、
+   傾きを直したり拡大したりしても、線は編み図と一緒に動く。
+   cur.ink = { ページ番号: [ { t:'pen'|'marker', c:色, w:太さ, p:[x,y,筆圧, ...] } ] } */
+const INK_COLORS = {
+  pen: ['#d62f2f', '#2b6cb0', '#222222', '#2f855a'],
+  marker: ['#ffe600', '#ff8fb1', '#7cc8ff', '#8be38b'],
+};
+const INK_WIDTH = { pen: 0.0028, marker: 0.014 }; // 画像の幅に対する割合
+let pageXf = null;     // 元画像 → キャンバスへの変換
+let inking = false;
+let inkTool = 'pen';
+const inkColor = { pen: INK_COLORS.pen[0], marker: INK_COLORS.marker[0] };
+let inkUndo = [];
+let inkStroke = null;  // 書いている途中の線
+let inkPenOnly = false;
+const inkTouches = new Set();
+
+const pageInk = () => {
+  if (!cur.ink) cur.ink = {};
+  if (!cur.ink[st().page]) cur.ink[st().page] = [];
+  return cur.ink[st().page];
+};
+
+// 画面の位置 → 元画像の中の位置（0〜1）
+function toSource(clientX, clientY) {
+  const r = $('stage').getBoundingClientRect();
+  const { rad, k, w, h, cw, ch } = pageXf;
+  const dx = ((clientX - r.left) / r.width) * cw - cw / 2;
+  const dy = ((clientY - r.top) / r.height) * ch - ch / 2;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const x = (dx * cos + dy * sin) / k + w / 2;
+  const y = (-dx * sin + dy * cos) / k + h / 2;
+  return { x: Math.round((x / w) * 1e5) / 1e5, y: Math.round((y / h) * 1e5) / 1e5 };
+}
+
+function drawInk() {
+  const ic = $('inkCanvas');
+  if (!pageXf || !cur) { ic.width = ic.height = 0; return; }
+  const { rad, k, w, h, cw, ch } = pageXf;
+  if (ic.width !== cw || ic.height !== ch) { ic.width = cw; ic.height = ch; }
+  const g = ic.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  const strokes = (cur.ink && cur.ink[st().page]) || [];
+  if (!strokes.length) return;
+  g.translate(cw / 2, ch / 2);
+  g.rotate(rad);
+  g.scale(k, k);
+  g.translate(-w / 2, -h / 2);
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  for (const s of strokes) {
+    const p = s.p, lw = s.w * w;
+    g.strokeStyle = g.fillStyle = s.c;
+    if (s.t === 'marker') {
+      // マーカーは半透明で、下の記号が透けて見えるように
+      g.globalAlpha = 0.45;
+      g.globalCompositeOperation = 'multiply';
+      g.lineWidth = lw;
+      g.beginPath();
+      g.moveTo(p[0] * w, p[1] * h);
+      for (let i = 3; i < p.length; i += 3) g.lineTo(p[i] * w, p[i + 1] * h);
+      if (p.length <= 3) g.lineTo(p[0] * w + 0.1, p[1] * h);
+      g.stroke();
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+    } else if (p.length <= 3) {
+      g.beginPath(); g.arc(p[0] * w, p[1] * h, lw * 0.6, 0, Math.PI * 2); g.fill();
+    } else {
+      for (let i = 3; i < p.length; i += 3) {
+        g.lineWidth = lw * (0.4 + (p[i - 1] + p[i + 2]) * 0.6);
+        g.beginPath();
+        g.moveTo(p[i - 3] * w, p[i - 2] * h);
+        g.lineTo(p[i] * w, p[i + 1] * h);
+        g.stroke();
+      }
+    }
+  }
+}
+
+let inkQueued = false;
+function queueInk() {
+  if (inkQueued) return;
+  inkQueued = true;
+  requestAnimationFrame(() => { inkQueued = false; drawInk(); });
+}
+
+function pushInkUndo() {
+  inkUndo.push({ page: st().page, json: JSON.stringify(pageInk()) });
+  if (inkUndo.length > 60) inkUndo.shift();
+}
+
+// 消しゴム：触れた線を1本まるごと消す
+function eraseInk(pt) {
+  const { k, w, h, cw } = pageXf;
+  const rw = $('stage').getBoundingClientRect().width;
+  const r = (16 * cw) / rw / k; // 画面で16ピクセルぶん（元画像の大きさで）
+  const list = pageInk();
+  const px = pt.x * w, py = pt.y * h;
+  // 点から線分までの距離
+  const segDist = (ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    const t = L ? clamp(((px - ax) * dx + (py - ay) * dy) / L, 0, 1) : 0;
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  };
+  const keep = list.filter((s) => {
+    const p = s.p, lim = r + (s.w * w) / 2;
+    if (p.length <= 3) return Math.hypot(px - p[0] * w, py - p[1] * h) >= lim;
+    for (let i = 3; i < p.length; i += 3) {
+      if (segDist(p[i - 3] * w, p[i - 2] * h, p[i] * w, p[i + 1] * h) < lim) return false;
+    }
+    return true;
+  });
+  if (keep.length === list.length) return false;
+  cur.ink[st().page] = keep;
+  return true;
+}
+
+function setInkPenOnly(on) {
+  inkPenOnly = on;
+  try { localStorage.setItem('penOnly', on ? '1' : '0'); } catch (e) { /* 何もしない */ }
+  $('viewer').classList.toggle('pen-only', on);
+  $('inkPenChk').checked = on;
+  renderInkPanel();
+}
+
+function renderInkPanel() {
+  document.querySelectorAll('[data-ink-tool]').forEach((b) => b.classList.toggle('on', b.dataset.inkTool === inkTool));
+  const colors = INK_COLORS[inkTool] || [];
+  $('inkColors').innerHTML = colors.map((c) =>
+    `<button class="swatch${c === inkColor[inkTool] ? ' on' : ''}" data-ink-color="${c}" style="background:${c}" aria-label="色"></button>`).join('');
+  $('inkHelp').textContent = inkPenOnly
+    ? 'Apple Pencil で書きます。指ではスクロール・拡大ができます。'
+    : '指でなぞって書きます。2本指で拡大できます。書いたものは自動で保存されます。';
+}
+
+function setInking(on) {
+  if (on && adjusting) setAdjusting(false);
+  inking = on;
+  inkStroke = null;
+  $('viewer').classList.toggle('inking', on);
+  $('inkPanel').hidden = !on;
+  $('inkBtn').classList.toggle('on', on);
+  if (on) {
+    try { inkPenOnly = localStorage.getItem('penOnly') === '1'; } catch (e) { /* 何もしない */ }
+    $('viewer').classList.toggle('pen-only', inkPenOnly);
+    $('inkPenChk').checked = inkPenOnly;
+    renderInkPanel();
+  } else {
+    scheduleSave();
+  }
+  if (cur) applyZoom();
+}
+
+function setupInk() {
+  const ic = $('inkCanvas');
+  $('inkBtn').onclick = () => setInking(!inking);
+  $('inkDone').onclick = () => setInking(false);
+  $('inkPenChk').addEventListener('change', (e) => setInkPenOnly(e.target.checked));
+  document.querySelectorAll('[data-ink-tool]').forEach((b) => {
+    b.onclick = () => { inkTool = b.dataset.inkTool; renderInkPanel(); };
+  });
+  $('inkColors').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ink-color]');
+    if (!b) return;
+    inkColor[inkTool] = b.dataset.inkColor;
+    renderInkPanel();
+  });
+  $('inkUndo').onclick = () => {
+    const u = inkUndo.pop();
+    if (!u) { toast('戻せる書き込みはありません'); return; }
+    if (u.page !== st().page) showPage(u.page);
+    if (!cur.ink) cur.ink = {};
+    cur.ink[u.page] = JSON.parse(u.json);
+    drawInk();
+    scheduleSave();
+  };
+  $('inkClear').onclick = () => {
+    if (!pageInk().length) return;
+    if (!confirm('このページの書き込みを全部消しますか？')) return;
+    pushInkUndo();
+    cur.ink[st().page] = [];
+    drawInk();
+    scheduleSave();
+  };
+
+  const addPoint = (ev) => {
+    const pt = toSource(ev.clientX, ev.clientY);
+    if (inkStroke.erase) {
+      // 速く動かしたときに間が抜けないよう、前の位置との間も細かく調べる
+      const last = inkStroke.last || pt;
+      const n = Math.min(60, Math.ceil(Math.hypot(pt.x - last.x, pt.y - last.y) / 0.004));
+      for (let i = 1; i <= Math.max(1, n); i++) {
+        const q = { x: last.x + ((pt.x - last.x) * i) / Math.max(1, n), y: last.y + ((pt.y - last.y) * i) / Math.max(1, n) };
+        if (eraseInk(q)) { inkStroke.changed = true; queueInk(); }
+      }
+      inkStroke.last = pt;
+      return;
+    }
+    const p = inkStroke.s.p;
+    const lx = p[p.length - 3], ly = p[p.length - 2];
+    if (Math.abs(pt.x - lx) + Math.abs(pt.y - ly) < 0.0006) return;
+    const pr = ev.pointerType === 'pen' && ev.pressure ? ev.pressure : 0.5;
+    p.push(pt.x, pt.y, Math.round(pr * 100) / 100);
+    queueInk();
+  };
+
+  const cancelStroke = () => {
+    if (!inkStroke) return;
+    const u = inkUndo.pop();
+    if (u) { cur.ink[u.page] = JSON.parse(u.json); }
+    inkStroke = null;
+    drawInk();
+  };
+
+  ic.addEventListener('pointerdown', (e) => {
+    if (!inking || !pageXf) return;
+    if (e.pointerType === 'touch') {
+      inkTouches.add(e.pointerId);
+      if (inkPenOnly) return;                 // 指はスクロール用
+      if (inkTouches.size >= 2) { cancelStroke(); return; } // 2本指 → 拡大に切りかえ
+      if (inkStroke && inkStroke.pen) return; // ペンで書いている最中の手のひら
+    }
+    if (e.pointerType === 'pen' && !inkPenOnly) {
+      setInkPenOnly(true);
+      toast('Apple Pencil を見つけました。ペンで書き、指でスクロールします');
+    }
+    if (inkStroke) return;
+    e.preventDefault();
+    ic.setPointerCapture(e.pointerId);
+    pushInkUndo();
+    inkStroke = { id: e.pointerId, pen: e.pointerType === 'pen' };
+    if (inkTool === 'eraser') {
+      inkStroke.erase = true;
+      addPoint(e);
+    } else {
+      const pt = toSource(e.clientX, e.clientY);
+      const pr = e.pointerType === 'pen' && e.pressure ? e.pressure : 0.5;
+      inkStroke.s = { t: inkTool, c: inkColor[inkTool], w: INK_WIDTH[inkTool], p: [pt.x, pt.y, Math.round(pr * 100) / 100] };
+      pageInk().push(inkStroke.s);
+      queueInk();
+    }
+  });
+  ic.addEventListener('pointermove', (e) => {
+    if (!inkStroke || e.pointerId !== inkStroke.id) return;
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    (evs.length ? evs : [e]).forEach(addPoint);
+  });
+  const up = (e) => {
+    if (e.pointerType === 'touch') inkTouches.delete(e.pointerId);
+    if (!inkStroke || e.pointerId !== inkStroke.id) return;
+    if (inkStroke.erase && !inkStroke.changed) inkUndo.pop(); // 何も消えなかった
+    inkStroke = null;
+    scheduleSave();
+  };
+  ic.addEventListener('pointerup', up);
+  ic.addEventListener('pointercancel', (e) => {
+    if (e.pointerType === 'touch') inkTouches.delete(e.pointerId);
+    if (inkStroke && e.pointerId === inkStroke.id) cancelStroke();
+  });
+  // Apple Pencil でなぞったときに画面がスクロールしないように
+  ic.addEventListener('touchstart', (e) => {
+    if (!inking) return;
+    if ([...e.changedTouches].some((t) => t.touchType === 'stylus')) e.preventDefault();
+  }, { passive: false });
+  ic.addEventListener('touchmove', (e) => {
+    if (inking && inkStroke && inkStroke.pen) e.preventDefault();
+  }, { passive: false });
 }
 
 /* --- 罫線を探して帯をぴったり合わせる ---
@@ -529,6 +1035,21 @@ function render() {
   $('shadeTop').style.height = (s.y * 100) + '%';
   $('shadeBottom').style.top = ((s.y + s.h) * 100) + '%';
 
+  // 編む向きの矢印：往復編みは段ごとに反対向き、輪編みはいつも同じ向き
+  const way = s.way || 'none';
+  let left = null;
+  if (way !== 'none') {
+    left = !s.wayFlip;                                  // 1段目は右から左（←）がふつう
+    if (way === 'flat' && s.row % 2 === 0) left = !left;
+  }
+  band.classList.toggle('way-left', left === true);
+  band.classList.toggle('way-right', left === false);
+  $('rowWay').hidden = left === null;
+  $('rowWay').textContent = left ? '←' : '→';
+  document.querySelectorAll('[data-way]').forEach((b) => b.classList.toggle('on', b.dataset.way === way));
+  $('wayFlipRow').hidden = way === 'none';
+  $('wayFlipChk').checked = !!s.wayFlip;
+
   $('rowNum').textContent = s.row;
   $('rowInput').value = s.row;
   $('dimChk').checked = !!s.dim;
@@ -551,9 +1072,29 @@ function scrollToBand(smooth = true) {
   scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
 }
 
+/* --- 段ごとに帯の位置を覚える ---
+   かぎ針は段によって高さがちがうので、合わせた帯の位置を段ごとに記録しておき、
+   2回目からはその位置へ動かす。 */
+const r5 = (v) => Math.round(v * 1e5) / 1e5;
+function rememberRow() {
+  const s = st();
+  if (!s.rowPos) s.rowPos = {};
+  s.rowPos[s.row] = { p: s.page, y: r5(s.y), h: r5(s.h) };
+}
+
 function stepRow(n) {
   const s = st();
   if (s.row + n < 1) return;
+  rememberRow();
+  const saved = s.rowPos[s.row + n];
+  if (saved) {
+    s.row += n;
+    s.y = saved.y;
+    s.h = saved.h;
+    afterStep(n);
+    if (saved.p !== s.page) showPage(saved.p);
+    return;
+  }
   const dy = (s.dir === 'up' ? -s.h : s.h) * n;
   const ny = s.y + dy;
   if (ny < -0.0001 || ny + s.h > 1.0001) {
@@ -561,11 +1102,15 @@ function stepRow(n) {
   }
   s.y = clamp(ny, 0, 1 - s.h);
   s.row += n;
+  if (s.snap !== false) snapBand(0.25, true);
+  afterStep(n);
+}
+
+function afterStep(n) {
   if (n > 0) {
     cur.counters.forEach((c) => { if (c.reset) c.n = 0; });
     renderCounters();
   }
-  if (s.snap !== false) snapBand(0.25, true);
   render();
   scrollToBand();
   scheduleSave();
@@ -573,12 +1118,13 @@ function stepRow(n) {
 }
 
 function setAdjusting(on) {
+  if (on && inking) setInking(false);
   adjusting = on;
   $('viewer').classList.toggle('adjusting', on);
   $('adjustPanel').hidden = !on;
   $('adjustBtn').textContent = on ? '完了' : '調整';
   if (cur) { render(); applyZoom(); }
-  if (!on) scheduleSave();
+  if (!on && cur) { rememberRow(); scheduleSave(); }
 }
 
 /* --- 帯のドラッグ（調整モードのとき） --- */
@@ -706,6 +1252,7 @@ function openNotes() {
   $('noteYarn').value = n.yarn || '';
   $('noteGauge').value = n.gauge || '';
   $('noteText').value = n.text || '';
+  $('handNoteLabel').textContent = cur.group ? '作品（グループ）の手書きメモを開く' : '手書きメモを開く';
   renderCounters();
   $('notesSheet').hidden = false;
 }
@@ -743,13 +1290,29 @@ function setupNotes() {
 function setup() {
   Editor.init();
   setupNotes();
+  setupInk();
   $('newChartBtn').onclick = () => Editor.newChartDialog();
 
   $('fileInput').addEventListener('change', (e) => {
-    const f = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = '';
-    if (f) importFile(f);
+    importFiles(files);
   });
+  $('newGroupBtn').onclick = newGroup;
+  $('groupBack').onclick = () => { curGroup = null; renderHome(); };
+  $('groupMenu').onclick = groupMenu;
+  NotePad.init();
+  $('groupNote').onclick = async () => {
+    const g = (await getAllGroups()).find((x) => x.id === curGroup);
+    if (g) NotePad.open('g:' + g.id, '📝 ' + g.name);
+  };
+  // 編む画面のメモから：グループに入っていれば作品のメモ、なければこの編み図のメモ
+  $('handNoteBtn').onclick = async () => {
+    await saveNow();
+    const g = cur.group && (await getAllGroups()).find((x) => x.id === cur.group);
+    if (g) NotePad.open('g:' + g.id, '📝 ' + g.name);
+    else NotePad.open('p:' + cur.id, '📝 ' + cur.name);
+  };
 
   $('backBtn').onclick = closeViewer;
   $('adjustBtn').onclick = () => setAdjusting(!adjusting);
@@ -770,6 +1333,16 @@ function setup() {
     b.onclick = () => { st().dir = b.dataset.dir; render(); scheduleSave(); };
   });
   $('snapChk').addEventListener('change', (e) => { st().snap = e.target.checked; scheduleSave(); });
+  document.querySelectorAll('[data-way]').forEach((b) => {
+    b.onclick = () => { st().way = b.dataset.way; render(); scheduleSave(); };
+  });
+  $('wayFlipChk').addEventListener('change', (e) => { st().wayFlip = e.target.checked; render(); scheduleSave(); });
+  $('resetRowsBtn').onclick = () => {
+    if (!confirm('段ごとに覚えた帯の位置を全部忘れますか？\n（今の段の帯はそのまま残ります）')) return;
+    st().rowPos = {};
+    scheduleSave();
+    toast('覚えた位置を消しました');
+  };
 
   // 調整パネルのタブ
   document.querySelectorAll('[data-tab]').forEach((b) => {

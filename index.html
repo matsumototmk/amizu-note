@@ -22,18 +22,28 @@
       <h1>あみ図ノート</h1>
     </header>
     <main class="home-main">
+      <div id="groupHead" class="group-head" hidden>
+        <button id="groupBack" class="text-btn">‹ すべて</button>
+        <b id="groupName" class="group-name"></b>
+        <button id="groupNote" class="note-btn">📝 メモ</button>
+        <button id="groupMenu" class="text-btn" aria-label="グループの設定">⋯</button>
+      </div>
       <label class="import-btn">
-        ＋ 編み図を取り込む
-        <input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" hidden>
+        <span id="importLabel">＋ 編み図を取り込む</span>
+        <input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" multiple hidden>
       </label>
-      <p class="hint">写真・画像・PDF を選べます</p>
+      <p id="importHint" class="hint">写真・画像・PDF を選べます（何枚かまとめて選ぶと、1つのグループになります）</p>
       <button id="newChartBtn" class="draw-btn">✎ 編み図を描く</button>
       <div id="installTip" class="install-tip" hidden>
         <b>アプリとして使うには</b><br>
         Safari の共有ボタン（□に↑）→「ホーム画面に追加」を押してください。ホーム画面から開くと、全画面で使え、データも消えにくくなります。
         <button id="installTipClose" class="text-btn" aria-label="閉じる">×</button>
       </div>
-      <h2 class="section-title">編む</h2>
+      <div class="section-row">
+        <h2 id="listTitle" class="section-title">編む</h2>
+        <button id="newGroupBtn" class="text-btn small-link">＋ グループを作る</button>
+      </div>
+      <ul id="groupList" class="pattern-list"></ul>
       <ul id="patternList" class="pattern-list"></ul>
       <p id="emptyMsg" class="empty">まだ編み図がありません。<br>上のボタンから取り込んでみましょう。</p>
       <div id="chartSection" hidden>
@@ -105,15 +115,47 @@
         <span>今の段数</span>
         <input id="rowInput" type="number" min="1" inputmode="numeric">
       </div>
+      <div class="panel-row">
+        <span>編む向きの矢印</span>
+        <div class="seg">
+          <button data-way="none">なし</button>
+          <button data-way="flat">往復編み</button>
+          <button data-way="round">輪編み</button>
+        </div>
+      </div>
+      <label id="wayFlipRow" class="check"><input id="wayFlipChk" type="checkbox"> 1段目は左から右へ編む</label>
       <label class="check"><input id="dimChk" type="checkbox"> ほかの段を暗くする</label>
       <label class="check"><input id="snapChk" type="checkbox"> 段を進めるとき罫線に自動で合わせる</label>
+      <p class="panel-help">帯の高さや位置を段ごとに合わせると、その段の分を覚えます。2回目からは「次の段」だけで、それぞれの段にぴったり動きます。</p>
+      <button id="resetRowsBtn" class="sub">覚えた段の位置を全部忘れる</button>
       <button id="editChartBtn" class="sub" hidden>✎ この編み図を描き直す</button>
       </div>
+    </div>
+
+    <!-- 書き込みの道具 -->
+    <div id="inkPanel" class="panel" hidden>
+      <div class="tabs">
+        <div class="seg tab-seg">
+          <button data-ink-tool="pen" class="on">ペン</button>
+          <button data-ink-tool="marker">マーカー</button>
+          <button data-ink-tool="eraser">消す</button>
+        </div>
+        <button id="inkDone" class="primary">完了</button>
+      </div>
+      <div class="opt-row">
+        <span id="inkColors" class="opt-row"></span>
+        <span class="opt-gap"></span>
+        <button id="inkUndo" class="chip-btn" aria-label="元に戻す">↶ 戻す</button>
+        <button id="inkClear" class="chip-btn danger">全部消す</button>
+      </div>
+      <p id="inkHelp" class="panel-help"></p>
+      <label class="check small"><input id="inkPenChk" type="checkbox"> Apple Pencil だけで書く（指ではスクロール）</label>
     </div>
 
     <div id="scroller">
       <div id="stage">
         <canvas id="pageCanvas" aria-label="編み図"></canvas>
+        <canvas id="inkCanvas" aria-hidden="true"></canvas>
         <div id="guides"></div>
         <div id="shadeTop" class="shade"></div>
         <div id="shadeBottom" class="shade"></div>
@@ -138,12 +180,13 @@
         </div>
         <div class="group">
           <button id="counterChip" class="counter-chip" aria-label="カウンターを1増やす"><span id="chipName">目数</span> <b id="chipNum">0</b> ＋</button>
+          <button id="inkBtn" aria-label="編み図に書き込む">✎ 書く</button>
           <button id="notesBtn">メモ</button>
         </div>
       </div>
       <div class="rowctl">
         <button id="prevRow" class="row-btn back">◀ 戻る</button>
-        <div class="rowcount"><span id="rowNum">1</span><small>段目</small></div>
+        <div class="rowcount"><span id="rowNum">1</span><small>段目</small><b id="rowWay" hidden></b></div>
         <button id="nextRow" class="row-btn next">次の段 ▶</button>
       </div>
     </footer>
@@ -155,6 +198,7 @@
         <button id="notesClose" class="primary">閉じる</button>
       </div>
       <div class="sheet-body">
+        <button id="handNoteBtn" class="note-big">📝 <span id="handNoteLabel">手書きメモを開く</span></button>
         <div id="counterList"></div>
         <button id="addCounter" class="sub">＋ カウンターを追加</button>
         <h3>メモ</h3>
@@ -190,6 +234,37 @@
     </footer>
   </section>
 
+  <!-- ===== 手書きメモ ===== -->
+  <section id="notePad" class="notepad" hidden>
+    <header class="bar">
+      <button id="npBack" class="text-btn">‹ 戻る</button>
+      <b id="npTitle" class="title"></b>
+      <button id="npUndo" class="icon-btn" aria-label="元に戻す">↶</button>
+      <button id="npRedo" class="icon-btn" aria-label="やり直す">↷</button>
+    </header>
+    <div id="npScroll" class="np-scroll">
+      <div id="npPages"></div>
+      <button id="npAddPage" class="sub np-add">＋ ページを追加</button>
+    </div>
+    <footer id="npTools" class="np-tools">
+      <div class="opt-row">
+        <div class="seg small-seg">
+          <button id="npHand" data-np-tool="hand">✋ 移動</button>
+          <button data-np-tool="pen">✎ ペン</button>
+          <button data-np-tool="eraser">⌫ 消す</button>
+        </div>
+        <span class="opt-gap"></span>
+        <button id="npClear" class="chip-btn danger">全部消す</button>
+      </div>
+      <div class="opt-row">
+        <span id="npColors" class="opt-row"></span>
+        <span class="opt-gap"></span>
+        <span id="npWidths" class="opt-row"></span>
+      </div>
+      <label class="check small"><input id="npPenChk" type="checkbox"> Apple Pencil だけで書く（指ではスクロール）</label>
+    </footer>
+  </section>
+
   <div id="modal" class="modal" hidden><div id="modalBox" class="modal-box"></div></div>
 
   <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><p id="busyText">読み込み中…</p></div></div>
@@ -197,6 +272,7 @@
 
   <script src="symbols.js"></script>
   <script src="editor.js"></script>
+  <script src="notepad.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
