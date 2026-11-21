@@ -191,11 +191,11 @@ async function importFiles(files) {
   if (!files.length) return;
   let group = curGroup;
   try {
-    // 何枚かまとめて選んだときは、グループにまとめる
+    // 何枚かまとめて選んだときは、新しいプロジェクトにまとめる
     if (files.length > 1 && !group) {
-      const name = prompt(`${files.length}枚の編み図を1つのグループにまとめます。\nグループの名前（作品名）を入れてください。`, '新しい作品');
+      const name = prompt(`${files.length}枚の編み図を1つのプロジェクトにまとめます。\nプロジェクトの名前（作品名）を入れてください。`, '新しいプロジェクト');
       if (name === null) return;
-      const g = { id: newId(), name: name.trim() || '新しい作品', created: Date.now() };
+      const g = newProject(name);
       await putGroup(g);
       group = g.id;
     }
@@ -230,21 +230,113 @@ function sheet(html, ready) {
 function closeSheet() { $('modal').hidden = true; $('modalBox').innerHTML = ''; }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* ---------- 一覧画面 ---------- */
-let listUrls = [];
-let curGroup = null;   // 開いているグループ（null = すべて）
+/* ---------- プロジェクト ----------
+   作品ごとの入れ物。保存場所は前の版の「グループ」と同じ（groups）。
+   { id, name, created, updated, status: 'todo'着手前 | 'doing'制作中 | 'done'完成,
+     start: 編み始めた日 'yyyy-mm-dd', done: 完成した日, cover: 表紙の写真id,
+     photos: [ { id, created, ink: [書き込み] } ],
+     memo: { yarn 糸, amount 使った糸の量, needle 針, gauge ゲージ, text メモ } }
+   写真の画像は pages に 'ph:写真id' で入れる（[大きい画像, 小さな絵]）。 */
+const STATUS = { todo: '着手前', doing: '制作中', done: '完成' };
+const statusOf = (g) => g.status || 'doing'; // 前の版で作ったグループは「制作中」として扱う
+const p2 = (n) => String(n).padStart(2, '0');
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+const fmtDate = (s) => (s ? s.replace(/^(\d+)-0?(\d+)-0?(\d+)$/, '$1/$2/$3') : '');
 
-function thumbOf(id, img) {
-  getPages(id).then((p) => {
-    if (p && p.blobs[0]) {
-      const url = URL.createObjectURL(p.blobs[0]);
-      listUrls.push(url);
-      img.src = url;
-    }
+function newProject(name) {
+  return { id: newId(), name: (name || '').trim() || '新しいプロジェクト', created: Date.now(), status: 'todo', photos: [] };
+}
+
+// かかった日数（編み始めた日から、完成した日 or 今日まで。両方の日を数える）
+function projDays(g) {
+  if (!g.start) return null;
+  const end = statusOf(g) === 'done' && g.done ? g.done : today();
+  const n = Math.round((Date.parse(end) - Date.parse(g.start)) / 86400000) + 1;
+  return n > 0 ? n : null;
+}
+
+// 写真
+const photoKey = (id) => 'ph:' + id;
+const putPhotoBlobs = (id, blobs) => dbRun('pages', 'readwrite', (t) => { t.objectStore('pages').put({ id: photoKey(id), blobs }); });
+async function getPhotoBlob(id, small) {
+  const p = await getPages(photoKey(id));
+  if (!p) return null;
+  return small ? p.blobs[1] || p.blobs[0] : p.blobs[0];
+}
+const deletePhotoBlob = (id) => dbRun('pages', 'readwrite', (t) => { t.objectStore('pages').delete(photoKey(id)); });
+
+// 一覧用の小さな絵（長い辺 480px）
+async function makeSmall(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(url);
+    const k = Math.min(1, 480 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+    c.width = c.height = 0;
+    return b || blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// プロジェクトを消す。編み図は消さずに外へ出す。写真と手書きメモは消える
+async function deleteProject(g) {
+  const [metas, charts] = await Promise.all([getAllMeta(), getAllCharts()]);
+  await dbRun(['groups', 'meta', 'charts', 'notes', 'pages'], 'readwrite', (t) => {
+    t.objectStore('groups').delete(g.id);
+    t.objectStore('notes').delete('g:' + g.id);
+    (g.photos || []).forEach((ph) => t.objectStore('pages').delete(photoKey(ph.id)));
+    metas.filter((m) => m.group === g.id).forEach((m) => { delete m.group; t.objectStore('meta').put(m); });
+    charts.filter((d) => d.group === g.id).forEach((d) => { delete d.group; t.objectStore('charts').put(d); });
   });
 }
 
-function patternCard(m) {
+// 着手前のプロジェクトで編み始めたら、自動で「制作中」に
+async function autoStart(gid) {
+  const g = (await getAllGroups()).find((x) => x.id === gid);
+  if (!g || g.status !== 'todo') return;
+  g.status = 'doing';
+  if (!g.start) g.start = today();
+  g.updated = Date.now();
+  await putGroup(g);
+  toast(`「${g.name}」を制作中にしました`);
+}
+
+/* ---------- 一覧画面 ---------- */
+let listUrls = [];
+let curGroup = null;   // 開いているプロジェクト（null = すべて）
+let curProj = null;    // 開いているプロジェクトのデータ
+let projFilter = 'all';
+try { projFilter = localStorage.getItem('projFilter') || 'all'; } catch (e) { /* 何もしない */ }
+
+function showBlob(blobPromise, img) {
+  Promise.resolve(blobPromise).then((b) => {
+    if (!b) return;
+    const url = URL.createObjectURL(b);
+    listUrls.push(url);
+    img.src = url;
+  });
+}
+function thumbOf(id, img) {
+  showBlob(getPages(id).then((p) => p && p.blobs[0]), img);
+}
+
+// 表紙：選んだ写真 → 最初の写真 → 最初の編み図 → 描いた編み図
+function setCover(g, items, charts, img, holder) {
+  const photos = g.photos || [];
+  const ph = photos.find((p) => p.id === g.cover) || photos[0];
+  if (ph) { showBlob(getPhotoBlob(ph.id, true), img); return; }
+  if (items[0]) { thumbOf(items[0].id, img); return; }
+  const c = charts.find((d) => d.thumb);
+  if (c) { img.src = c.thumb; return; }
+  holder.classList.add('no-cover');
+}
+
+function cardBase(name, sub, onOpen, onMore) {
   const li = document.createElement('li');
   li.className = 'card';
   const open = document.createElement('button');
@@ -253,94 +345,119 @@ function patternCard(m) {
   img.alt = '';
   const info = document.createElement('div');
   info.className = 'card-info';
-  const name = document.createElement('div');
-  name.className = 'card-name';
-  name.textContent = m.name;
+  const nm = document.createElement('div');
+  nm.className = 'card-name';
+  nm.textContent = name;
   const metaLine = document.createElement('div');
   metaLine.className = 'card-meta';
-  metaLine.textContent = `${m.state.row} 段目` + (m.pageCount > 1 ? ` ・ ${m.pageCount} ページ` : '');
-  info.append(name, metaLine);
+  metaLine.textContent = sub;
+  info.append(nm, metaLine);
   open.append(img, info);
-  open.onclick = () => openViewer(m.id);
+  open.onclick = onOpen;
   const more = document.createElement('button');
   more.className = 'card-more';
   more.textContent = '⋯';
   more.setAttribute('aria-label', 'メニュー');
-  more.onclick = () => patternMenu(m);
+  more.onclick = onMore;
   li.append(open, more);
+  return { li, img };
+}
+
+function patternCard(m) {
+  const { li, img } = cardBase(m.name, `${m.state.row} 段目` + (m.pageCount > 1 ? ` ・ ${m.pageCount} ページ` : ''),
+    () => openViewer(m.id), () => itemMenu('pattern', m));
   thumbOf(m.id, img);
   return li;
 }
 
-function groupCard(g, items) {
-  const li = document.createElement('li');
-  li.className = 'card group-card';
-  const open = document.createElement('button');
-  open.className = 'card-open';
-  const folder = document.createElement('div');
-  folder.className = 'folder';
-  if (items.length) {
-    items.slice(0, 2).forEach((m) => { const img = document.createElement('img'); img.alt = ''; folder.append(img); thumbOf(m.id, img); });
-  } else {
-    folder.innerHTML = '<div class="folder-empty">📁</div>';
-  }
-  const info = document.createElement('div');
-  info.className = 'card-info';
-  const name = document.createElement('div');
-  name.className = 'card-name';
-  name.textContent = '📁 ' + g.name;
-  const metaLine = document.createElement('div');
-  metaLine.className = 'card-meta';
-  metaLine.textContent = items.length ? `編み図 ${items.length} 枚` : 'まだ空です';
-  info.append(name, metaLine);
-  open.append(folder, info);
-  open.onclick = () => { curGroup = g.id; renderHome(); window.scrollTo(0, 0); };
-  li.append(open);
+const KIND_NAME = { knit: '棒針', 'crochet-grid': 'かぎ針・方眼', 'crochet-free': 'かぎ針・円' };
+function chartCard(d) {
+  const { li, img } = cardBase(d.name, '✎ 描いた編み図 ・ ' + (KIND_NAME[d.kind] || '') + (d.mode === 'grid' ? ` ・ ${d.cols}目×${d.rows}段` : ''),
+    () => Editor.open(d.id), () => itemMenu('chart', d));
+  if (d.thumb) img.src = d.thumb;
   return li;
 }
 
+function projectCard(g, items, charts) {
+  const st = statusOf(g);
+  const li = document.createElement('li');
+  li.className = 'proj-card st-' + st;
+  const btn = document.createElement('button');
+  btn.className = 'proj-open';
+  btn.innerHTML = `<div class="proj-thumb"><img alt=""><span class="proj-badge">${STATUS[st]}</span></div>
+    <div class="proj-body"><div class="proj-name"></div><div class="proj-sub"></div></div>`;
+  btn.querySelector('.proj-name').textContent = g.name;
+  const parts = [];
+  const n = projDays(g);
+  if (n && st === 'done') parts.push(`${n}日で完成`);
+  else if (n && st === 'doing') parts.push(`${n}日目`);
+  parts.push(`編み図 ${items.length + charts.length}`);
+  if ((g.photos || []).length) parts.push(`写真 ${g.photos.length}`);
+  btn.querySelector('.proj-sub').textContent = parts.join(' ・ ');
+  setCover(g, items, charts, btn.querySelector('img'), btn.querySelector('.proj-thumb'));
+  btn.onclick = () => { curGroup = g.id; renderHome(); window.scrollTo(0, 0); };
+  li.append(btn);
+  return li;
+}
+
+// 編み図をプロジェクトに入れる・出す（描いた編み図と、そこから作った「編む」用の編み図は一緒に動かす）
+async function setProject(kind, item, gid) {
+  const apply = (x) => { if (gid) x.group = gid; else delete x.group; };
+  apply(item);
+  if (kind === 'pattern') {
+    await putMeta(item);
+    if (item.chartId) { const d = await getChart(item.chartId); if (d) { apply(d); await putChart(d); } }
+  } else {
+    await putChart(item);
+    if (item.patternId) { const m = (await getAllMeta()).find((x) => x.id === item.patternId); if (m) { apply(m); await putMeta(m); } }
+  }
+}
+
 // 編み図の「⋯」メニュー
-async function patternMenu(m) {
+async function itemMenu(kind, item) {
   const groups = await getAllGroups();
-  const g = groups.find((x) => x.id === m.group);
+  const g = groups.find((x) => x.id === item.group);
   sheet(`
-    <h2>${esc(m.name)}</h2>
+    <h2>${esc(item.name)}</h2>
     <div class="menu-list">
-      <button data-act="rename">名前を変える</button>
-      <button data-act="move">${g ? 'ほかのグループへ移す' : 'グループに入れる'}</button>
-      ${g ? `<button data-act="out">グループから出す</button>` : ''}
-      <button data-act="del" class="danger">削除</button>
+      ${kind === 'pattern' ? '<button data-act="rename">名前を変える</button>' : '<button data-act="open">開いて描き直す</button>'}
+      <button data-act="move">${g ? 'ほかのプロジェクトへ移す' : 'プロジェクトに入れる'}</button>
+      ${g ? '<button data-act="out">プロジェクトから出す</button>' : ''}
+      ${kind === 'pattern' ? '<button data-act="del" class="danger">削除</button>' : ''}
     </div>
     <div class="modal-actions"><button class="sub" data-act="close">閉じる</button></div>
   `, (box) => {
     box.onclick = async (e) => {
-      const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
-      if (!act) return;
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      const act = b.dataset.act;
       if (act === 'close') closeSheet();
+      if (act === 'open') { closeSheet(); Editor.open(item.id); }
       if (act === 'rename') {
-        const name = prompt('名前を変更', m.name);
-        if (name && name.trim()) { m.name = name.trim(); await putMeta(m); }
+        const name = prompt('名前を変更', item.name);
+        if (name && name.trim()) { item.name = name.trim(); await putMeta(item); }
         closeSheet(); renderHome();
       }
-      if (act === 'move') chooseGroup(m, groups);
-      if (act === 'out') { delete m.group; await putMeta(m); closeSheet(); renderHome(); toast('グループから出しました'); }
+      if (act === 'move') chooseProject(kind, item, groups);
+      if (act === 'out') { await setProject(kind, item, null); closeSheet(); renderHome(); toast('プロジェクトから出しました'); }
       if (act === 'del') {
-        if (!confirm(`「${m.name}」を削除しますか？\n（帯の位置や書き込みも消えます）`)) return;
-        await deletePattern(m.id);
+        if (!confirm(`「${item.name}」を削除しますか？\n（帯の位置や書き込みも消えます）`)) return;
+        await deletePattern(item.id);
         closeSheet(); renderHome();
       }
     };
   });
 }
 
-// どのグループに入れるか選ぶ
-function chooseGroup(m, groups) {
-  groups.sort((a, b) => b.created - a.created);
+// どのプロジェクトに入れるか選ぶ
+function chooseProject(kind, item, groups) {
+  const order = { doing: 0, todo: 1, done: 2 };
+  groups.sort((a, b) => (order[statusOf(a)] - order[statusOf(b)]) || b.created - a.created);
   sheet(`
-    <h2>どのグループに入れますか？</h2>
+    <h2>どのプロジェクトに入れますか？</h2>
     <div class="menu-list">
-      ${groups.map((g) => `<button data-gid="${g.id}" class="${g.id === m.group ? 'on' : ''}">📁 ${esc(g.name)}</button>`).join('')}
-      <button data-gid="new">＋ 新しいグループを作って入れる</button>
+      ${groups.map((g) => `<button data-gid="${g.id}" class="${g.id === item.group ? 'on' : ''}">${esc(g.name)}　<small>${STATUS[statusOf(g)]}</small></button>`).join('')}
+      <button data-gid="new">＋ 新しいプロジェクトを作って入れる</button>
     </div>
     <div class="modal-actions"><button class="sub" data-gid="cancel">やめる</button></div>
   `, (box) => {
@@ -350,14 +467,13 @@ function chooseGroup(m, groups) {
       let gid = b.dataset.gid;
       if (gid === 'cancel') { closeSheet(); return; }
       if (gid === 'new') {
-        const name = prompt('グループの名前（作品名）', '新しい作品');
+        const name = prompt('プロジェクトの名前（作品名）', '新しいプロジェクト');
         if (!name || !name.trim()) return;
-        const g = { id: newId(), name: name.trim(), created: Date.now() };
+        const g = newProject(name);
         await putGroup(g);
         gid = g.id;
       }
-      m.group = gid;
-      await putMeta(m);
+      await setProject(kind, item, gid);
       closeSheet();
       renderHome();
       const g = (await getAllGroups()).find((x) => x.id === gid);
@@ -367,23 +483,24 @@ function chooseGroup(m, groups) {
 }
 
 async function newGroup() {
-  const name = prompt('グループの名前（作品名）\n例：アランのセーター', '新しい作品');
+  const name = prompt('プロジェクトの名前（作品名）\n例：アランのセーター', '新しいプロジェクト');
   if (!name || !name.trim()) return;
-  const g = { id: newId(), name: name.trim(), created: Date.now() };
+  const g = newProject(name);
   await putGroup(g);
   curGroup = g.id;
-  renderHome();
-  toast('グループを作りました。上のボタンから編み図を取り込めます');
+  await renderHome();
+  window.scrollTo(0, 0);
+  toast('プロジェクトを作りました。写真や編み図を入れましょう');
 }
 
 async function groupMenu() {
-  const g = (await getAllGroups()).find((x) => x.id === curGroup);
+  const g = curProj;
   if (!g) return;
   sheet(`
-    <h2>📁 ${esc(g.name)}</h2>
+    <h2>${esc(g.name)}</h2>
     <div class="menu-list">
-      <button data-act="rename">グループの名前を変える</button>
-      <button data-act="del" class="danger">グループを削除（中の編み図は残ります）</button>
+      <button data-act="rename">名前を変える</button>
+      <button data-act="del" class="danger">プロジェクトを削除</button>
     </div>
     <div class="modal-actions"><button class="sub" data-act="close">閉じる</button></div>
   `, (box) => {
@@ -393,13 +510,13 @@ async function groupMenu() {
       const act = b.dataset.act;
       if (act === 'close') closeSheet();
       if (act === 'rename') {
-        const name = prompt('グループの名前', g.name);
-        if (name && name.trim()) { g.name = name.trim(); await putGroup(g); }
+        const name = prompt('プロジェクトの名前', g.name);
+        if (name && name.trim()) { g.name = name.trim(); g.updated = Date.now(); await putGroup(g); }
         closeSheet(); renderHome();
       }
       if (act === 'del') {
-        if (!confirm(`グループ「${g.name}」を削除しますか？\n中の編み図は消えずに、グループの外に出ます。\n（グループの手書きメモは消えます）`)) return;
-        await deleteGroup(g.id, await getAllMeta());
+        if (!confirm(`プロジェクト「${g.name}」を削除しますか？\n\n・写真と手書きメモは消えます（元に戻せません）\n・編み図は消えずに、プロジェクトの外に出ます`)) return;
+        await deleteProject(g);
         curGroup = null;
         closeSheet(); renderHome();
       }
@@ -407,79 +524,187 @@ async function groupMenu() {
   });
 }
 
+/* ---------- プロジェクトのページ ---------- */
+let projSaveTimer;
+function saveProj() {
+  if (!curProj) return;
+  curProj.updated = Date.now();
+  const g = curProj;
+  clearTimeout(projSaveTimer);
+  projSaveTimer = setTimeout(() => putGroup(g).catch((e) => console.error(e)), 400);
+}
+
+function renderProjStatus() {
+  const g = curProj;
+  const st = statusOf(g);
+  document.querySelectorAll('[data-status]').forEach((b) => b.classList.toggle('on', b.dataset.status === st));
+  $('projView').className = 'st-' + st;
+  $('projStart').value = g.start || '';
+  $('projDone').value = g.done || '';
+  $('projDoneRow').hidden = st !== 'done';
+  const n = projDays(g);
+  $('projDays').textContent = !n ? (st === 'todo' ? 'まだ編み始めていません' : '')
+    : st === 'done' ? `かかった日数：${n}日（${fmtDate(g.start)}〜${fmtDate(g.done)}）`
+      : st === 'doing' ? `編み始めて ${n}日目` : '';
+}
+
+function renderPhotos() {
+  const g = curProj;
+  const grid = $('photoGrid');
+  grid.innerHTML = '';
+  (g.photos || []).forEach((ph, i) => {
+    const b = document.createElement('button');
+    b.className = 'photo-thumb' + (g.cover === ph.id ? ' cover' : '');
+    const img = document.createElement('img');
+    img.alt = '';
+    b.append(img);
+    if (ph.ink && ph.ink.length) { const s = document.createElement('span'); s.className = 'ph-ink'; s.textContent = '✎'; b.append(s); }
+    if (g.cover === ph.id) { const s = document.createElement('span'); s.className = 'ph-cover'; s.textContent = '表紙'; b.append(s); }
+    showBlob(getPhotoBlob(ph.id, true), img);
+    b.onclick = () => PhotoView.open(g, i);
+    grid.append(b);
+  });
+  $('photoEmpty').hidden = (g.photos || []).length > 0;
+}
+
+function renderProject(g, allMetas, charts) {
+  curProj = g;
+  if (!g.photos) g.photos = [];
+  if (!g.memo) g.memo = {};
+  $('groupName').textContent = g.name;
+  const items = allMetas.filter((m) => m.group === g.id).sort((a, b) => a.created - b.created);
+  const metaIds = new Set(allMetas.map((m) => m.id));
+  const pch = charts.filter((d) => d.group === g.id && !(d.patternId && metaIds.has(d.patternId)))
+    .sort((a, b) => a.created - b.created);
+
+  const cov = $('projCover');
+  cov.innerHTML = '<img alt="">';
+  cov.classList.remove('no-cover');
+  setCover(g, items, pch, cov.querySelector('img'), cov);
+  renderProjStatus();
+  renderPhotos();
+
+  const list = $('projCharts');
+  list.innerHTML = '';
+  items.forEach((m) => list.append(patternCard(m)));
+  pch.forEach((d) => list.append(chartCard(d)));
+  $('projChartsEmpty').hidden = items.length + pch.length > 0;
+
+  const memo = g.memo;
+  $('pjYarn').value = memo.yarn || '';
+  $('pjAmount').value = memo.amount || '';
+  $('pjNeedle').value = memo.needle || '';
+  $('pjGauge').value = memo.gauge || '';
+  $('pjText').value = memo.text || '';
+}
+
+async function addPhotos(files) {
+  const g = curProj;
+  if (!g || !files.length) return;
+  try {
+    for (let i = 0; i < files.length; i++) {
+      busy(files.length > 1 ? `写真を入れています… ${i + 1} / ${files.length}` : '写真を入れています…');
+      const big = await shrinkPhoto(files[i]);
+      const small = await makeSmall(big);
+      const id = newId();
+      await putPhotoBlobs(id, [big, small]);
+      g.photos.push({ id, created: Date.now() + i });
+    }
+    g.updated = Date.now();
+    await putGroup(g);
+    busy(null);
+    renderHome();
+  } catch (err) {
+    busy(null);
+    console.error(err);
+    alert('写真を入れられませんでした。\n' + (err.message || err));
+  }
+}
+
+function setupProjects() {
+  $('newGroupBtn').onclick = newGroup;
+  $('groupBack').onclick = () => { curGroup = null; renderHome(); };
+  $('groupMenu').onclick = groupMenu;
+  document.querySelectorAll('[data-filter]').forEach((b) => {
+    b.onclick = () => {
+      projFilter = b.dataset.filter;
+      try { localStorage.setItem('projFilter', projFilter); } catch (e) { /* 何もしない */ }
+      renderHome();
+    };
+  });
+  document.querySelectorAll('[data-status]').forEach((b) => {
+    b.onclick = () => {
+      const g = curProj;
+      const st = b.dataset.status;
+      g.status = st;
+      if (st !== 'todo' && !g.start) g.start = today();
+      if (st === 'done' && !g.done) g.done = today();
+      saveProj();
+      renderProjStatus();
+      if (st === 'done') toast('完成おめでとうございます！ 完成写真を入れておきましょう');
+    };
+  });
+  $('projStart').addEventListener('change', (e) => { curProj.start = e.target.value || undefined; saveProj(); renderProjStatus(); });
+  $('projDone').addEventListener('change', (e) => { curProj.done = e.target.value || undefined; saveProj(); renderProjStatus(); });
+  const bindMemo = (id, key) => $(id).addEventListener('input', (e) => { curProj.memo[key] = e.target.value; saveProj(); });
+  bindMemo('pjYarn', 'yarn');
+  bindMemo('pjAmount', 'amount');
+  bindMemo('pjNeedle', 'needle');
+  bindMemo('pjGauge', 'gauge');
+  bindMemo('pjText', 'text');
+  $('photoInput').addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; addPhotos(fs); });
+  $('projFile').addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; importFiles(fs); });
+  $('projDraw').onclick = () => Editor.newChartDialog(curGroup);
+}
+
 async function renderHome() {
   listUrls.forEach(URL.revokeObjectURL);
   listUrls = [];
-  const list = $('patternList');
-  const glist = $('groupList');
-  list.innerHTML = '';
-  glist.innerHTML = '';
-  const allMetas = await getAllMeta();
-  const groups = await getAllGroups();
+  const [allMetas, groups, charts] = await Promise.all([getAllMeta(), getAllGroups(), getAllCharts()]);
   const group = groups.find((g) => g.id === curGroup);
-  if (!group) curGroup = null;
-  const inGroup = !!group;
+  if (!group) { curGroup = null; curProj = null; }
+  $('rootView').hidden = !!group;
+  $('projView').hidden = !group;
+  if (group) { renderProject(group, allMetas, charts); return; }
 
-  // グループの中を見ているときと、すべてを見ているときで表示を変える
-  $('groupHead').hidden = !inGroup;
-  if (inGroup) $('groupName').textContent = '📁 ' + group.name;
-  $('importLabel').textContent = inGroup ? '＋ このグループに編み図を取り込む' : '＋ 編み図を取り込む';
-  $('importHint').textContent = inGroup
-    ? '写真・画像・PDF を選べます（何枚かまとめて選べます）'
-    : '写真・画像・PDF を選べます（何枚かまとめて選ぶと、1つのグループになります）';
-  $('newChartBtn').hidden = inGroup;
-  $('newGroupBtn').hidden = inGroup;
-  $('backupBox').hidden = inGroup;
-  $('listTitle').textContent = inGroup ? '編み図（取り込んだ順）' : '編む';
+  // プロジェクトのカード（制作中 → 着手前 → 完成、その中は最近さわった順）
+  const time = (x) => x.updated || x.created;
+  const metaIds = new Set(allMetas.map((m) => m.id));
+  const itemsOf = (g) => allMetas.filter((m) => m.group === g.id);
+  const chartsOf = (g) => charts.filter((d) => d.group === g.id && !(d.patternId && metaIds.has(d.patternId)));
+  const lastUsed = (g) => Math.max(time(g), ...itemsOf(g).map(time));
+  const order = { doing: 0, todo: 1, done: 2 };
+  const shown = groups.filter((g) => projFilter === 'all' || statusOf(g) === projFilter)
+    .sort((a, b) => (order[statusOf(a)] - order[statusOf(b)]) || (lastUsed(b) - lastUsed(a)));
+  const grid = $('projGrid');
+  grid.innerHTML = '';
+  shown.forEach((g) => grid.append(projectCard(g, itemsOf(g), chartsOf(g))));
+  const label = { all: 'すべて', todo: '着手前', doing: '制作中', done: '完成' };
+  document.querySelectorAll('[data-filter]').forEach((b) => {
+    const f = b.dataset.filter;
+    const n = f === 'all' ? groups.length : groups.filter((g) => statusOf(g) === f).length;
+    b.textContent = `${label[f]} ${n}`;
+    b.classList.toggle('on', f === projFilter);
+  });
+  $('projEmpty').hidden = shown.length > 0;
+  $('projEmpty').innerHTML = groups.length
+    ? `「${label[projFilter]}」のプロジェクトはありません。`
+    : 'まだプロジェクトがありません。<br>「＋ 新しいプロジェクト」から作りましょう。';
 
-  let metas;
-  if (inGroup) {
-    metas = allMetas.filter((m) => m.group === curGroup).sort((a, b) => a.created - b.created);
-  } else {
-    const time = (x) => x.updated || x.created;
-    const known = new Set(groups.map((g) => g.id));
-    // グループは、中の編み図をいちばん最近さわった順
-    const lastUsed = (g) => Math.max(g.created, ...allMetas.filter((m) => m.group === g.id).map(time));
-    groups.sort((a, b) => lastUsed(b) - lastUsed(a)).forEach((g) => {
-      glist.append(groupCard(g, allMetas.filter((m) => m.group === g.id).sort((a, b) => a.created - b.created)));
-    });
-    metas = allMetas.filter((m) => !m.group || !known.has(m.group)).sort((a, b) => time(b) - time(a));
-  }
-  $('emptyMsg').hidden = metas.length > 0 || (!inGroup && groups.length > 0);
-  $('emptyMsg').innerHTML = inGroup
-    ? 'このグループはまだ空です。<br>上のボタンから取り込むか、一覧の編み図の「⋯」から入れられます。'
-    : 'まだ編み図がありません。<br>上のボタンから取り込んでみましょう。';
-  metas.forEach((m) => list.append(patternCard(m)));
+  // プロジェクトに入っていない編み図
+  const known = new Set(groups.map((g) => g.id));
+  const loose = allMetas.filter((m) => !m.group || !known.has(m.group)).sort((a, b) => time(b) - time(a));
+  const list = $('patternList');
+  list.innerHTML = '';
+  loose.forEach((m) => list.append(patternCard(m)));
+  $('looseSection').hidden = loose.length === 0;
 
-  // 描いた編み図（グループの中を見ているときは出さない）
-  if (inGroup) { $('chartSection').hidden = true; return; }
-  const charts = (await getAllCharts()).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+  // 描いた編み図（プロジェクトに入っていないもの）
+  const looseCharts = charts.filter((d) => !d.group || !known.has(d.group)).sort((a, b) => time(b) - time(a));
   const clist = $('chartList');
   clist.innerHTML = '';
-  $('chartSection').hidden = charts.length === 0;
-  const kindName = { knit: '棒針', 'crochet-grid': 'かぎ針・方眼', 'crochet-free': 'かぎ針・円' };
-  for (const d of charts) {
-    const li = document.createElement('li');
-    li.className = 'card';
-    const open = document.createElement('button');
-    open.className = 'card-open';
-    const img = document.createElement('img');
-    img.alt = '';
-    if (d.thumb) img.src = d.thumb;
-    const info = document.createElement('div');
-    info.className = 'card-info';
-    const name = document.createElement('div');
-    name.className = 'card-name';
-    name.textContent = d.name;
-    const metaLine = document.createElement('div');
-    metaLine.className = 'card-meta';
-    metaLine.textContent = (kindName[d.kind] || '') + (d.mode === 'grid' ? ` ・ ${d.cols}目×${d.rows}段` : '');
-    info.append(name, metaLine);
-    open.append(img, info);
-    open.onclick = () => Editor.open(d.id);
-    li.append(open);
-    clist.append(li);
-  }
+  looseCharts.forEach((d) => clist.append(chartCard(d)));
+  $('chartSection').hidden = looseCharts.length === 0;
 }
 
 /* ---------- 見る画面 ---------- */
@@ -1392,6 +1617,7 @@ function afterStep(n) {
   if (n > 0) {
     cur.counters.forEach((c) => { if (c.reset) c.n = 0; });
     renderCounters();
+    if (cur.group) autoStart(cur.group); // 着手前のプロジェクトなら「制作中」に
   }
   render();
   scrollToBand();
@@ -1567,7 +1793,7 @@ function openNotes() {
   $('noteYarn').value = n.yarn || '';
   $('noteGauge').value = n.gauge || '';
   $('noteText').value = n.text || '';
-  $('handNoteLabel').textContent = cur.group ? '作品（グループ）の手書きメモを開く' : '手書きメモを開く';
+  $('handNoteLabel').textContent = cur.group ? 'プロジェクトの手書きメモを開く' : '手書きメモを開く';
   renderCounters();
   $('notesSheet').hidden = false;
 }
@@ -1615,15 +1841,11 @@ function setup() {
     e.target.value = '';
     importFiles(files);
   });
-  $('newGroupBtn').onclick = newGroup;
-  $('groupBack').onclick = () => { curGroup = null; renderHome(); };
-  $('groupMenu').onclick = groupMenu;
+  setupProjects();
+  PhotoView.init();
   NotePad.init();
-  $('groupNote').onclick = async () => {
-    const g = (await getAllGroups()).find((x) => x.id === curGroup);
-    if (g) NotePad.open('g:' + g.id, '📝 ' + g.name);
-  };
-  // 編む画面のメモから：グループに入っていれば作品のメモ、なければこの編み図のメモ
+  $('groupNote').onclick = () => { if (curProj) NotePad.open('g:' + curProj.id, '📝 ' + curProj.name); };
+  // 編む画面のメモから：プロジェクトに入っていればプロジェクトのメモ、なければこの編み図のメモ
   $('handNoteBtn').onclick = async () => {
     await saveNow();
     const g = cur.group && (await getAllGroups()).find((x) => x.id === cur.group);

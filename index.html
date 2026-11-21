@@ -22,42 +22,104 @@
       <h1>あみ図ノート</h1>
     </header>
     <main class="home-main">
-      <div id="groupHead" class="group-head" hidden>
-        <button id="groupBack" class="text-btn">‹ すべて</button>
-        <b id="groupName" class="group-name"></b>
-        <button id="groupNote" class="note-btn">📝 メモ</button>
-        <button id="groupMenu" class="text-btn" aria-label="グループの設定">⋯</button>
-      </div>
-      <label class="import-btn">
-        <span id="importLabel">＋ 編み図を取り込む</span>
-        <input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" multiple hidden>
-      </label>
-      <p id="importHint" class="hint">写真・画像・PDF を選べます（何枚かまとめて選ぶと、1つのグループになります）</p>
-      <button id="newChartBtn" class="draw-btn">✎ 編み図を描く</button>
-      <div id="installTip" class="install-tip" hidden>
-        <b>アプリとして使うには</b><br>
-        Safari の共有ボタン（□に↑）→「ホーム画面に追加」を押してください。ホーム画面から開くと、全画面で使え、データも消えにくくなります。
-        <button id="installTipClose" class="text-btn" aria-label="閉じる">×</button>
-      </div>
-      <div class="section-row">
-        <h2 id="listTitle" class="section-title">編む</h2>
-        <button id="newGroupBtn" class="text-btn small-link">＋ グループを作る</button>
-      </div>
-      <ul id="groupList" class="pattern-list"></ul>
-      <ul id="patternList" class="pattern-list"></ul>
-      <p id="emptyMsg" class="empty">まだ編み図がありません。<br>上のボタンから取り込んでみましょう。</p>
-      <div id="chartSection" hidden>
-        <h2 class="section-title">描いた編み図</h2>
-        <ul id="chartList" class="pattern-list"></ul>
-      </div>
-      <div id="backupBox" class="backup-box">
-        <h2 class="section-title">バックアップ</h2>
-        <p class="backup-help">編み図・段数・書き込み・メモを全部まとめて、1つのファイルに保存します。iPhoneとiPadの間で移すときにも使えます。</p>
-        <p id="backupInfo" class="backup-info"></p>
-        <div class="backup-btns">
-          <button id="backupSave" class="sub">⬇ バックアップを保存</button>
-          <label class="sub file-btn">⬆ バックアップから戻す<input id="backupFile" type="file" hidden></label>
+      <!-- すべてのプロジェクト -->
+      <div id="rootView">
+        <div id="installTip" class="install-tip" hidden>
+          <b>アプリとして使うには</b><br>
+          Safari の共有ボタン（□に↑）→「ホーム画面に追加」を押してください。ホーム画面から開くと、全画面で使え、データも消えにくくなります。
+          <button id="installTipClose" class="text-btn" aria-label="閉じる">×</button>
         </div>
+        <button id="newGroupBtn" class="import-btn">＋ 新しいプロジェクト</button>
+        <div class="row-btns">
+          <label class="sub file-btn">＋ 編み図を取り込む<input id="fileInput" type="file" accept="image/*,application/pdf,.pdf" multiple hidden></label>
+          <button id="newChartBtn" class="sub">✎ 編み図を描く</button>
+        </div>
+        <p class="hint">編み図を何枚かまとめて選ぶと、新しいプロジェクトになります</p>
+
+        <h2 class="section-title">プロジェクト</h2>
+        <div class="seg filter-seg">
+          <button data-filter="all">すべて</button>
+          <button data-filter="todo">着手前</button>
+          <button data-filter="doing">制作中</button>
+          <button data-filter="done">完成</button>
+        </div>
+        <ul id="projGrid" class="proj-grid"></ul>
+        <p id="projEmpty" class="empty"></p>
+
+        <div id="looseSection">
+          <h2 class="section-title">プロジェクトに入っていない編み図</h2>
+          <ul id="patternList" class="pattern-list"></ul>
+        </div>
+        <div id="chartSection" hidden>
+          <h2 class="section-title">描いた編み図</h2>
+          <ul id="chartList" class="pattern-list"></ul>
+        </div>
+        <div id="backupBox" class="backup-box">
+          <h2 class="section-title">バックアップ</h2>
+          <p class="backup-help">プロジェクト・写真・編み図・段数・書き込み・メモを全部まとめて、1つのファイルに保存します。iPhoneとiPadの間で移すときにも使えます。</p>
+          <p id="backupInfo" class="backup-info"></p>
+          <div class="backup-btns">
+            <button id="backupSave" class="sub">⬇ バックアップを保存</button>
+            <label class="sub file-btn">⬆ バックアップから戻す<input id="backupFile" type="file" hidden></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1つのプロジェクト -->
+      <div id="projView" hidden>
+        <div class="group-head">
+          <button id="groupBack" class="text-btn">‹ すべて</button>
+          <b id="groupName" class="group-name"></b>
+          <button id="groupMenu" class="text-btn" aria-label="プロジェクトの設定">⋯</button>
+        </div>
+        <div class="proj-hero">
+          <div id="projCover" class="proj-cover"></div>
+          <div class="proj-info">
+            <div class="seg status-seg">
+              <button data-status="todo">着手前</button>
+              <button data-status="doing">制作中</button>
+              <button data-status="done">完成</button>
+            </div>
+            <div class="date-row">
+              <label class="field"><span>編み始めた日</span><input id="projStart" type="date"></label>
+              <label id="projDoneRow" class="field"><span>完成した日</span><input id="projDone" type="date"></label>
+            </div>
+            <p id="projDays" class="proj-days"></p>
+          </div>
+        </div>
+
+        <section class="proj-sec">
+          <div class="sec-head">
+            <h3>📷 写真</h3>
+            <label class="text-btn">＋ 写真を追加<input id="photoInput" type="file" accept="image/*" multiple hidden></label>
+          </div>
+          <div id="photoGrid" class="photo-grid"></div>
+          <p id="photoEmpty" class="empty-s">完成写真や、途中の写真を入れましょう。写真にはペンで書き込めます。</p>
+        </section>
+
+        <section class="proj-sec">
+          <div class="sec-head">
+            <h3>🧶 編み図</h3>
+            <span class="sec-btns">
+              <label class="text-btn">＋ 取り込む<input id="projFile" type="file" accept="image/*,application/pdf,.pdf" multiple hidden></label>
+              <button id="projDraw" class="text-btn">✎ 描く</button>
+            </span>
+          </div>
+          <ul id="projCharts" class="pattern-list"></ul>
+          <p id="projChartsEmpty" class="empty-s">まだ編み図がありません。「＋ 取り込む」か「✎ 描く」から入れましょう。一覧の編み図の「⋯」からも入れられます。</p>
+        </section>
+
+        <section class="proj-sec">
+          <div class="sec-head"><h3>📝 メモ</h3></div>
+          <div class="memo-grid">
+            <label class="field"><span>糸</span><input id="pjYarn" placeholder="例：並太ウール 生成り"></label>
+            <label class="field"><span>使った糸の量</span><input id="pjAmount" placeholder="例：5玉（約250g）"></label>
+            <label class="field"><span>針・かぎ針</span><input id="pjNeedle" placeholder="例：8号 / 6号"></label>
+            <label class="field"><span>ゲージ</span><input id="pjGauge" placeholder="例：10cm角 18目×24段"></label>
+          </div>
+          <label class="field"><span>メモ</span><textarea id="pjText" rows="3" placeholder="気づいたこと、変えたところ、誰にあげたか など"></textarea></label>
+          <button id="groupNote" class="note-big">📝 手書きメモを開く</button>
+        </section>
       </div>
     </main>
   </section>
@@ -314,6 +376,34 @@
     </footer>
   </section>
 
+  <!-- ===== 写真を大きく見る・書き込む ===== -->
+  <section id="photoView" class="photoview" hidden>
+    <header class="bar">
+      <button id="pvBack" class="text-btn">‹ 戻る</button>
+      <b id="pvTitle" class="title"></b>
+      <button id="pvWrite" class="text-btn">✎ 書く</button>
+      <button id="pvMenu" class="icon-btn" aria-label="メニュー">⋯</button>
+    </header>
+    <div id="pvWrap" class="pv-wrap">
+      <img id="pvImg" alt="">
+      <canvas id="pvInk"></canvas>
+      <button id="pvPrev" class="pv-nav prev" aria-label="前の写真">‹</button>
+      <button id="pvNext" class="pv-nav next" aria-label="次の写真">›</button>
+    </div>
+    <footer id="pvTools" class="np-tools" hidden>
+      <div class="opt-row">
+        <div class="seg small-seg">
+          <button data-pv-tool="pen">✎ ペン</button>
+          <button data-pv-tool="eraser">⌫ 消す</button>
+        </div>
+        <span id="pvColors" class="opt-row"></span>
+        <span class="opt-gap"></span>
+        <button id="pvUndo" class="chip-btn">↶ 戻す</button>
+        <button id="pvDone" class="primary">完了</button>
+      </div>
+    </footer>
+  </section>
+
   <div id="modal" class="modal" hidden><div id="modalBox" class="modal-box"></div></div>
 
   <div id="busy" class="busy" hidden><div class="busy-box"><div class="spinner"></div><p id="busyText">読み込み中…</p></div></div>
@@ -323,6 +413,7 @@
   <script src="editor.js"></script>
   <script src="notepad.js"></script>
   <script src="backup.js"></script>
+  <script src="photos.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -687,6 +687,7 @@ const Editor = (() => {
       meta.name = doc.name;
       meta.pageCount = 1;
       meta.chartId = doc.id;
+      if (doc.group) meta.group = doc.group; else delete meta.group; // 描いた編み図と同じプロジェクトに
       const s = meta.state;
       s.page = 0; s.rot = 0; s.quarter = 0;
       if (doc.mode === 'grid') {
@@ -814,7 +815,7 @@ const Editor = (() => {
   }
   function hideModal() { el('modal').hidden = true; el('modalBox').innerHTML = ''; }
 
-  function newChartDialog() {
+  function newChartDialog(groupId) {
     showModal(`
       <h2>新しい編み図</h2>
       <label class="field"><span>名前</span><input id="ncName" value="新しい編み図"></label>
@@ -878,6 +879,7 @@ const Editor = (() => {
           mode: type === 'crochet-free' ? 'free' : 'grid',
           cols, rows, cells, strokes: [], stamps: [], guides: true,
         };
+        if (typeof groupId === 'string' && groupId) d.group = groupId; // プロジェクトの中から作ったとき
         await putChart(d);
         hideModal();
         await open(d.id);

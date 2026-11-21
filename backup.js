@@ -3,7 +3,7 @@
 /* =========================================================
    あみ図ノート  バックアップ
    - 端末の中に保存しているもの（編み図の画像・段数・帯の位置・書き込み・
-     描いた編み図・グループ・手書きメモ）を、1つのファイルにまとめる
+     描いた編み図・プロジェクト（写真も）・手書きメモ）を、1つのファイルにまとめる
    - そのファイルから元に戻す（この端末にだけあるものは消さない。
      同じものがあるときは、新しいほうを残す）
    ファイルの形：
@@ -146,7 +146,7 @@ const Backup = (() => {
     }
     const line = (name, r) => (r.put.length ? `・${name}：新しく ${r.add.length}件、更新 ${r.upd.length}件\n` : '');
     const ok = confirm(`${when} のバックアップを読み込みます。\n\n`
-      + line('取り込んだ編み図', m) + line('描いた編み図', c) + line('グループ', g) + line('手書きメモ', n)
+      + line('取り込んだ編み図', m) + line('描いた編み図', c) + line('プロジェクト（写真も）', g) + line('手書きメモ', n)
       + '\nこの端末にだけあるものは消えません。同じものがあるときは、新しいほうを残します。');
     if (!ok) return;
 
@@ -160,7 +160,14 @@ const Backup = (() => {
           if (p) t.objectStore('pages').put({ id: p.id, blobs: blobsOf(p) });
         }
         c.put.forEach((x) => t.objectStore('charts').put(x));
-        g.put.forEach((x) => t.objectStore('groups').put(x));
+        g.put.forEach((x) => {
+          t.objectStore('groups').put(x);
+          // プロジェクトの写真の画像も戻す
+          (x.photos || []).forEach((ph) => {
+            const p = pages.get('ph:' + ph.id);
+            if (p) t.objectStore('pages').put({ id: p.id, blobs: blobsOf(p) });
+          });
+        });
         n.put.forEach((x) => t.objectStore('notes').put(x));
       });
       busy(null);
